@@ -1,12 +1,10 @@
 def test_health_check(client):
-    """Verify GET /health returns status ok."""
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
 
 
 def test_signup_success(client):
-    """Verify successful user signup."""
     payload = {
         "email": "developer@example.com",
         "password": "StrongPassword123!",
@@ -21,7 +19,6 @@ def test_signup_success(client):
 
 
 def test_signup_duplicate_email(client):
-    """Verify signup rejects duplicate emails with 409 Conflict."""
     payload = {
         "email": "duplicate@example.com",
         "password": "StrongPassword123!",
@@ -29,14 +26,12 @@ def test_signup_duplicate_email(client):
     first_resp = client.post("/auth/signup", json=payload)
     assert first_resp.status_code == 201
 
-    # Second signup with same email
     dup_resp = client.post("/auth/signup", json=payload)
     assert dup_resp.status_code == 409
     assert "already registered" in dup_resp.json()["detail"].lower()
 
 
 def test_signup_weak_password(client):
-    """Verify signup rejects passwords shorter than 8 characters."""
     payload = {
         "email": "weak@example.com",
         "password": "short",
@@ -46,7 +41,6 @@ def test_signup_weak_password(client):
 
 
 def test_login_success(client):
-    """Verify login returns valid JWT access and refresh tokens."""
     signup_payload = {
         "email": "login_user@example.com",
         "password": "SecurePassword456!",
@@ -67,7 +61,6 @@ def test_login_success(client):
 
 
 def test_login_wrong_password(client):
-    """Verify login fails with 401 for incorrect password."""
     signup_payload = {
         "email": "wrongpass@example.com",
         "password": "CorrectPassword123!",
@@ -84,7 +77,6 @@ def test_login_wrong_password(client):
 
 
 def test_login_nonexistent_user(client):
-    """Verify login fails with 401 for unknown email."""
     login_payload = {
         "email": "nonexistent@example.com",
         "password": "AnyPassword123!",
@@ -94,7 +86,6 @@ def test_login_nonexistent_user(client):
 
 
 def test_get_me_authenticated(client):
-    """Verify GET /auth/me returns current user details with valid JWT."""
     signup_payload = {
         "email": "me_user@example.com",
         "password": "Password789!",
@@ -120,12 +111,9 @@ def test_get_me_authenticated(client):
 
 
 def test_get_me_unauthorized(client):
-    """Verify GET /auth/me rejects requests without token or with invalid token."""
-    # Missing token
     resp_no_token = client.get("/auth/me")
     assert resp_no_token.status_code in [401, 403]
 
-    # Invalid token
     resp_invalid_token = client.get(
         "/auth/me",
         headers={"Authorization": "Bearer invalid.jwt.token"},

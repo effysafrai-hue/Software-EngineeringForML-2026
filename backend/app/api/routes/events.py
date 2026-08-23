@@ -27,10 +27,6 @@ def list_events(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """
-    List events owned by the authenticated user.
-    Supports optional date range filtering and orders events chronologically.
-    """
     query = db.query(Event).filter(Event.user_id == current_user.id)
 
     if start_time is not None:
@@ -52,10 +48,6 @@ def create_event(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """
-    Create a new calendar event scoped to the authenticated user.
-    Enforces end_time > start_time validation.
-    """
     event = Event(
         user_id=current_user.id,
         title=event_in.title,
@@ -80,10 +72,6 @@ def get_event(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """
-    Retrieve a specific calendar event.
-    Returns 404 if event does not exist, 403 if belonging to another user.
-    """
     event = db.query(Event).filter(Event.id == event_id).first()
     if not event:
         raise HTTPException(
@@ -111,10 +99,6 @@ def update_event(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """
-    Update a calendar event.
-    Enforces ownership (403 if not owner) and validates end_time > start_time.
-    """
     event = db.query(Event).filter(Event.id == event_id).first()
     if not event:
         raise HTTPException(
@@ -130,7 +114,6 @@ def update_event(
 
     update_data = event_update.model_dump(exclude_unset=True)
 
-    # Validate resulting start and end times
     effective_start = update_data.get("start_time", event.start_time)
     effective_end = update_data.get("end_time", event.end_time)
 
@@ -159,10 +142,6 @@ def delete_event(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """
-    Delete a calendar event.
-    Enforces ownership (403 if not owner).
-    """
     event = db.query(Event).filter(Event.id == event_id).first()
     if not event:
         raise HTTPException(

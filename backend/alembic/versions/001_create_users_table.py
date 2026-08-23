@@ -10,7 +10,6 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
-# revision identifiers, used by Alembic.
 revision: str = "001_create_users_table"
 down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None

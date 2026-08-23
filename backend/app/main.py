@@ -13,11 +13,9 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# SlowAPI Rate Limiter Setup
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# CORS configuration for frontend communication
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -26,12 +24,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Register routers
 app.include_router(auth.router)
 app.include_router(events.router)
 
 
 @app.get("/health", tags=["Health"])
 async def health_check():
-    """Health check endpoint returning application status."""
     return {"status": "ok"}

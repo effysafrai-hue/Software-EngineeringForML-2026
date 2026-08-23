@@ -7,11 +7,9 @@ from sqlalchemy.pool import StaticPool
 from app.db.session import Base, get_db
 from app.main import app
 
-# Import all models to ensure schema creation
 from app.models.user import User
 from app.models.event import Event
 
-# Use in-memory SQLite database for isolated test execution
 SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
 
 engine = create_engine(
@@ -24,7 +22,6 @@ TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engin
 
 @pytest.fixture(scope="function")
 def db_session():
-    """Create a fresh database schema for every test function."""
     Base.metadata.create_all(bind=engine)
     db = TestingSessionLocal()
     try:
@@ -36,7 +33,6 @@ def db_session():
 
 @pytest.fixture(scope="function")
 def client(db_session):
-    """FastAPI TestClient with overridden get_db dependency and disabled limiter for tests."""
     def override_get_db():
         try:
             yield db_session
@@ -44,7 +40,7 @@ def client(db_session):
             pass
 
     app.dependency_overrides[get_db] = override_get_db
-    app.state.limiter.enabled = False  # Disable rate limiting in unit test runs
+    app.state.limiter.enabled = False
 
     with TestClient(app) as test_client:
         yield test_client
@@ -55,7 +51,6 @@ def client(db_session):
 
 @pytest.fixture(scope="function")
 def auth_headers_user_a(client):
-    """Register User A and return Authorization header dict."""
     client.post(
         "/auth/signup",
         json={"email": "usera@example.com", "password": "Password123!"},
@@ -70,7 +65,6 @@ def auth_headers_user_a(client):
 
 @pytest.fixture(scope="function")
 def auth_headers_user_b(client):
-    """Register User B and return Authorization header dict."""
     client.post(
         "/auth/signup",
         json={"email": "userb@example.com", "password": "Password123!"},

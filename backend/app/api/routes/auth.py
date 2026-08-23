@@ -33,13 +33,6 @@ def signup(
     signup_data: UserSignupRequest,
     db: Session = Depends(get_db),
 ):
-    """
-    Register a new user:
-    - Validates email format
-    - Enforces minimum password strength
-    - Hashes password with bcrypt
-    - Rejects duplicate emails with a clear error
-    """
     existing_user = db.query(User).filter(User.email == signup_data.email).first()
     if existing_user:
         raise HTTPException(
@@ -70,9 +63,6 @@ def login(
     login_data: UserLoginRequest,
     db: Session = Depends(get_db),
 ):
-    """
-    Authenticate credentials and issue JWT access (30m) & refresh (7d) tokens.
-    """
     user = db.query(User).filter(User.email == login_data.email).first()
     if not user or not verify_password(login_data.password, user.hashed_password):
         raise HTTPException(
@@ -100,8 +90,4 @@ def login(
 def get_me(
     current_user: User = Depends(get_current_user),
 ):
-    """
-    Protected route requiring valid JWT Bearer token.
-    Returns current user's id, email, created_at, and preferences.
-    """
     return current_user
