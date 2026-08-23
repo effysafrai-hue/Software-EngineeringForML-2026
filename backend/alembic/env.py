@@ -9,7 +9,8 @@ sys.path.insert(0, os.path.realpath(os.path.join(os.path.dirname(__file__), ".."
 
 from app.core.config import settings
 from app.db.session import Base
-from app.models.user import User  # Registers User model in metadata
+from app.models.user import User  # Registers User model
+from app.models.event import Event  # Registers Event model
 
 config = context.config
 

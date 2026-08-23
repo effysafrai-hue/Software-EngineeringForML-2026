@@ -7,6 +7,10 @@ from sqlalchemy.pool import StaticPool
 from app.db.session import Base, get_db
 from app.main import app
 
+# Import all models to ensure schema creation
+from app.models.user import User
+from app.models.event import Event
+
 # Use in-memory SQLite database for isolated test execution
 SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
 
@@ -47,3 +51,33 @@ def client(db_session):
 
     app.dependency_overrides.clear()
     app.state.limiter.enabled = True
+
+
+@pytest.fixture(scope="function")
+def auth_headers_user_a(client):
+    """Register User A and return Authorization header dict."""
+    client.post(
+        "/auth/signup",
+        json={"email": "usera@example.com", "password": "Password123!"},
+    )
+    login_resp = client.post(
+        "/auth/login",
+        json={"email": "usera@example.com", "password": "Password123!"},
+    )
+    token = login_resp.json()["access_token"]
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture(scope="function")
+def auth_headers_user_b(client):
+    """Register User B and return Authorization header dict."""
+    client.post(
+        "/auth/signup",
+        json={"email": "userb@example.com", "password": "Password123!"},
+    )
+    login_resp = client.post(
+        "/auth/login",
+        json={"email": "userb@example.com", "password": "Password123!"},
+    )
+    token = login_resp.json()["access_token"]
+    return {"Authorization": f"Bearer {token}"}

@@ -235,7 +235,7 @@ export default function App() {
             </div>
             <h4 className="font-semibold text-white text-sm mb-1">PostgreSQL 16</h4>
             <p className="text-xs text-slate-400 mb-3">
-              Configured via DATABASE_URL with Alembic users table migration.
+              Configured via DATABASE_URL with Alembic users and events migrations.
             </p>
             <div className="text-[11px] font-mono text-emerald-400 bg-emerald-950/40 border border-emerald-900/40 rounded px-2 py-1 inline-block">
               :5432 (volume saved)

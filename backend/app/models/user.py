@@ -1,4 +1,5 @@
 from sqlalchemy import Column, Integer, String, DateTime, JSON
+from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.db.session import Base
 
@@ -16,3 +17,6 @@ class User(Base):
     )
     # JSON / JSONB column for user preferences & future long-term memory
     preferences = Column(JSON, nullable=True, default=dict)
+
+    # Relationships
+    events = relationship("Event", back_populates="user", cascade="all, delete-orphan")
