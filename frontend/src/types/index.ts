@@ -29,3 +29,15 @@ export interface EventInput {
   start_time: string;
   end_time: string;
 }
+
+export interface ChatMessage {
+  id: number;
+  role: 'user' | 'assistant';
+  content: string;
+  created_at: string;
+}
+
+export interface ChatResponse {
+  reply: string;
+  action_taken?: string | null;
+}

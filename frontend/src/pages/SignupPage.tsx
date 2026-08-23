@@ -42,7 +42,7 @@ export const SignupPage: React.FC = () => {
           <Zap className="w-6 h-6 text-white" />
         </div>
         <h2 className="text-2xl font-extrabold tracking-tight text-white">Create Your Account</h2>
-        <p className="mt-1 text-sm text-slate-400">Get started with your personal calendar</p>
+        <p className="mt-1 text-sm text-slate-400">Get started with your personal AI calendar</p>
       </div>
 
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md px-4 sm:px-0">

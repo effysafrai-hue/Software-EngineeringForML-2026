@@ -5,8 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.db.session import get_db
-from app.models.event import Event
-from app.models.user import User
+from app.models import Event, User
 from app.schemas.event import EventCreate, EventResponse, EventUpdate
 
 router = APIRouter(prefix="/events", tags=["Calendar Events"])

@@ -6,9 +6,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.session import Base, get_db
 from app.main import app
-
-from app.models.user import User
-from app.models.event import Event
+from app.models import User, Event, ChatMessage
 
 SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
 

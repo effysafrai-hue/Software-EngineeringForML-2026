@@ -29,7 +29,7 @@ class TokenResponse(BaseModel):
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
-    expires_in: int  # Duration in seconds (1800 for 30m)
+    expires_in: int
 
 
 class UserResponse(BaseModel):

@@ -15,8 +15,10 @@ class User(Base):
         server_default=func.now(),
         nullable=False,
     )
-    # JSON / JSONB column for user preferences & future long-term memory
     preferences = Column(JSON, nullable=True, default=dict)
 
     # Relationships
     events = relationship("Event", back_populates="user", cascade="all, delete-orphan")
+    chat_messages = relationship(
+        "ChatMessage", back_populates="user", cascade="all, delete-orphan"
+    )

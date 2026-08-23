@@ -4,13 +4,11 @@ import sys
 from sqlalchemy import engine_from_config, pool
 from alembic import context
 
-# Ensure app package is importable
 sys.path.insert(0, os.path.realpath(os.path.join(os.path.dirname(__file__), "..")))
 
 from app.core.config import settings
 from app.db.session import Base
-from app.models.user import User
-from app.models.event import Event
+from app.models import User, Event, ChatMessage
 
 config = context.config
 

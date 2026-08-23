@@ -1,4 +1,4 @@
-import { CalendarEvent, EventInput, TokenResponse, User } from '../types';
+import { CalendarEvent, ChatMessage, ChatResponse, EventInput, TokenResponse, User } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -96,4 +96,17 @@ export const api = {
       },
       token
     ),
+
+  sendChat: (token: string, message: string) =>
+    request<ChatResponse>(
+      '/chat',
+      {
+        method: 'POST',
+        body: JSON.stringify({ message }),
+      },
+      token
+    ),
+
+  getChatHistory: (token: string) =>
+    request<ChatMessage[]>('/chat/history', {}, token),
 };

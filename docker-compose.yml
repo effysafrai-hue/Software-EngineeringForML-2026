@@ -27,6 +27,8 @@ services:
     environment:
       - DATABASE_URL=${DATABASE_URL:-postgresql+psycopg://postgres:postgres@postgres:5432/se_ml_effy}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:-se_ml_effy_super_secret_jwt_key_change_in_production_32bytes}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-3.6-flash}
       - CORS_ORIGINS=["http://localhost:5173", "http://127.0.0.1:5173"]
     ports:
       - "8000:8000"
