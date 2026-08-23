@@ -209,10 +209,10 @@ export default function App() {
             </div>
             <h4 className="font-semibold text-white text-sm mb-1">FastAPI Backend</h4>
             <p className="text-xs text-slate-400 mb-3">
-              Python 3.12 with Uvicorn hot reloading and CORS middleware enabled.
+              Python 3.12 with JWT Auth, Bcrypt hashing, and SlowAPI rate limiting.
             </p>
             <div className="text-[11px] font-mono text-indigo-400 bg-indigo-950/40 border border-indigo-900/40 rounded px-2 py-1 inline-block">
-              :8000/health
+              :8000/docs
             </div>
           </div>
 
@@ -235,7 +235,7 @@ export default function App() {
             </div>
             <h4 className="font-semibold text-white text-sm mb-1">PostgreSQL 16</h4>
             <p className="text-xs text-slate-400 mb-3">
-              Configured via DATABASE_URL with empty Alembic migration support.
+              Configured via DATABASE_URL with Alembic users table migration.
             </p>
             <div className="text-[11px] font-mono text-emerald-400 bg-emerald-950/40 border border-emerald-900/40 rounded px-2 py-1 inline-block">
               :5432 (volume saved)
