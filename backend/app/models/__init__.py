@@ -3,6 +3,7 @@ from app.models.event import Event
 from app.models.chat import ChatMessage
 from app.models.course import Course, CourseReview
 from app.models.shared_calendar import SharedCalendar, SharedCalendarMember, SharedMemory
+from app.models.notification import Notification
 
 __all__ = [
     "User",
@@ -13,4 +14,5 @@ __all__ = [
     "SharedCalendar",
     "SharedCalendarMember",
     "SharedMemory",
+    "Notification",
 ]

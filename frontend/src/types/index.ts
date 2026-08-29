@@ -67,3 +67,13 @@ export interface SharedMemory {
   created_by?: number | null;
   created_at: string;
 }
+
+export interface AppNotification {
+  id: number;
+  user_id: number;
+  event_id?: number | null;
+  message: string;
+  read: boolean;
+  created_at: string;
+  event_title?: string | null;
+}

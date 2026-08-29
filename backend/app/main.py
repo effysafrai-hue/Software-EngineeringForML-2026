@@ -1,16 +1,33 @@
+import logging
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
-from app.api.routes import auth, events, chat, shared_calendars
+from app.api.routes import auth, events, chat, shared_calendars, notifications
 from app.core.config import settings
 from app.core.limiter import limiter
+from app.services.notification_scheduler import start_scheduler, stop_scheduler
+
+logger = logging.getLogger("main")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup / shutdown lifecycle: launch the notification scheduler."""
+    logger.info("Starting notification scheduler...")
+    start_scheduler()
+    yield
+    logger.info("Stopping notification scheduler...")
+    stop_scheduler()
+
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
-    description="Full-stack SE_ML_effy FastAPI backend with JWT Auth, Shared Calendars, Course Grounding & Gemini AI",
+    description="Full-stack SE_ML_effy FastAPI backend with JWT Auth, Shared Calendars, Notifications, Course Grounding & Gemini AI",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 app.state.limiter = limiter
@@ -28,6 +45,7 @@ app.include_router(auth.router)
 app.include_router(events.router)
 app.include_router(chat.router)
 app.include_router(shared_calendars.router)
+app.include_router(notifications.router)
 
 
 @app.get("/health", tags=["Health"])

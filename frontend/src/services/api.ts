@@ -7,6 +7,7 @@ import {
   User,
   SharedCalendar,
   SharedMemory,
+  AppNotification,
 } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -210,6 +211,26 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ content }),
       },
+      token
+    ),
+
+  // Notifications
+  listNotifications: (token: string, unreadOnly = false) => {
+    const params = unreadOnly ? '?unread_only=true' : '';
+    return request<AppNotification[]>(`/notifications${params}`, {}, token);
+  },
+
+  markNotificationRead: (token: string, notifId: number) =>
+    request<{ message: string }>(
+      `/notifications/${notifId}/read`,
+      { method: 'PATCH' },
+      token
+    ),
+
+  markAllNotificationsRead: (token: string) =>
+    request<{ message: string }>(
+      '/notifications/read-all',
+      { method: 'PATCH' },
       token
     ),
 };
