@@ -34,7 +34,8 @@ class EventUpdate(BaseModel):
 
 class EventResponse(EventBase):
     id: int
-    user_id: int
+    user_id: Optional[int] = None
+    shared_calendar_id: Optional[int] = None
     created_at: datetime
     updated_at: datetime
 

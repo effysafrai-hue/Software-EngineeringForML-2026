@@ -8,6 +8,7 @@ from sqlalchemy.pool import StaticPool
 from app.main import app
 from app.db.session import Base, get_db
 from app.core.security import get_password_hash, create_access_token
+from app.core.limiter import limiter
 from app.models.user import User
 
 # In-memory SQLite for high-speed, isolated test execution
@@ -19,6 +20,20 @@ engine = create_engine(
     poolclass=StaticPool,
 )
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+
+@pytest.fixture(autouse=True)
+def reset_rate_limits():
+    """Reset SlowAPI rate limit storage before and after each test."""
+    try:
+        limiter.reset()
+    except Exception:
+        pass
+    yield
+    try:
+        limiter.reset()
+    except Exception:
+        pass
 
 
 @pytest.fixture(scope="function")

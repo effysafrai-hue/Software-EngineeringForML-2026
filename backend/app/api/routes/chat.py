@@ -4,18 +4,15 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.db.session import get_db
-from app.models import ChatMessage, User
+from app.models.chat import ChatMessage
+from app.models.user import User
 from app.schemas.chat import ChatMessageResponse, ChatRequest, ChatResponse
 from app.services.ai_agent import process_chat
 
 router = APIRouter(prefix="/chat", tags=["AI Chat"])
 
 
-@router.post(
-    "",
-    response_model=ChatResponse,
-    summary="Send a message to the Gemini AI Calendar Assistant",
-)
+@router.post("", response_model=ChatResponse)
 def send_chat_message(
     chat_req: ChatRequest,
     db: Session = Depends(get_db),
@@ -55,18 +52,14 @@ def send_chat_message(
     )
 
 
-@router.get(
-    "/history",
-    response_model=List[ChatMessageResponse],
-    summary="Retrieve chat message history for the current user",
-)
+@router.get("/history", response_model=List[ChatMessageResponse])
 def get_chat_history(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     messages = (
         db.query(ChatMessage)
-        .filter(ChatMessage.user_id == current_user.id)
+        .filter(ChatMessage.user_id == current_user.id, ChatMessage.shared_calendar_id == None)
         .order_by(ChatMessage.created_at.asc())
         .all()
     )
