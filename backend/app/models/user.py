@@ -17,8 +17,10 @@ class User(Base):
     )
     preferences = Column(JSON, nullable=True, default=dict)
 
-    # Relationships
     events = relationship("Event", back_populates="user", cascade="all, delete-orphan")
     chat_messages = relationship(
         "ChatMessage", back_populates="user", cascade="all, delete-orphan"
+    )
+    shared_calendar_memberships = relationship(
+        "SharedCalendarMember", back_populates="user", cascade="all, delete-orphan"
     )

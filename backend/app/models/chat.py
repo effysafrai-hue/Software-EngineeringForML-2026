@@ -14,6 +14,12 @@ class ChatMessage(Base):
         nullable=False,
         index=True,
     )
+    shared_calendar_id = Column(
+        Integer,
+        ForeignKey("shared_calendars.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
     role = Column(String(20), nullable=False)
     content = Column(Text, nullable=False)
     created_at = Column(
@@ -23,3 +29,4 @@ class ChatMessage(Base):
     )
 
     user = relationship("User", back_populates="chat_messages")
+    shared_calendar = relationship("SharedCalendar", back_populates="chat_messages")

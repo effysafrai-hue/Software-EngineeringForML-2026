@@ -3,13 +3,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
-from app.api.routes import auth, events, chat
+from app.api.routes import auth, events, chat, shared_calendars
 from app.core.config import settings
 from app.core.limiter import limiter
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
-    description="Full-stack SE_ML_effy FastAPI backend with JWT Auth, Calendar Events, Gemini AI & Postgres",
+    description="Full-stack SE_ML_effy FastAPI backend with JWT Auth, Shared Calendars, Course Grounding & Gemini AI",
     version="0.1.0",
 )
 
@@ -27,6 +27,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(events.router)
 app.include_router(chat.router)
+app.include_router(shared_calendars.router)
 
 
 @app.get("/health", tags=["Health"])

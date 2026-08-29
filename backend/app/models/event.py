@@ -11,7 +11,13 @@ class Event(Base):
     user_id = Column(
         Integer,
         ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
+        index=True,
+    )
+    shared_calendar_id = Column(
+        Integer,
+        ForeignKey("shared_calendars.id", ondelete="CASCADE"),
+        nullable=True,
         index=True,
     )
     title = Column(String(255), nullable=False)
@@ -31,3 +37,4 @@ class Event(Base):
     )
 
     user = relationship("User", back_populates="events")
+    shared_calendar = relationship("SharedCalendar", back_populates="events")

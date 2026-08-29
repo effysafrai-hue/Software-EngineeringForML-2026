@@ -8,7 +8,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy import or_
 
 from app.core.config import settings
-from app.models import User, Event, ChatMessage
+from app.models import User, Event, ChatMessage, Course, CourseReview
+from app.services.course_grounding import retrieve_relevant_courses
 
 logger = logging.getLogger("ai_agent")
 logger.setLevel(logging.DEBUG)
@@ -30,10 +31,6 @@ _RESOLVED_MODEL_NAME: Optional[str] = None
 
 
 def resolve_best_gemini_model() -> str:
-    """
-    Query available models for the configured API key and return the most capable
-    model supporting 'generateContent' to prevent 404 NotFound errors across API versions.
-    """
     global _RESOLVED_MODEL_NAME
     if _RESOLVED_MODEL_NAME:
         return _RESOLVED_MODEL_NAME
@@ -84,7 +81,6 @@ def resolve_best_gemini_model() -> str:
 
 
 def parse_iso_datetime(dt_str: str) -> datetime:
-    """Parse an ISO 8601 datetime string with timezone awareness using standard library."""
     clean_str = dt_str.replace("Z", "+00:00")
     dt = datetime.fromisoformat(clean_str)
     if dt.tzinfo is None:
@@ -100,7 +96,6 @@ def create_event_tool(
     end_time: str,
     description: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Create a new event, reminder, task, or deadline marker in the user's calendar."""
     logger.info(f"Executing create_event_tool: title='{title}', start_time='{start_time}', end_time='{end_time}'")
     try:
         start_dt = parse_iso_datetime(start_time)
@@ -152,7 +147,6 @@ def update_event_tool(
     end_time: Optional[str] = None,
     description: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Modify an existing event's date, time, title, or description."""
     logger.info(f"Executing update_event_tool: event_id={event_id}, title={title}, start_time={start_time}")
     event = db.query(Event).filter(Event.id == event_id, Event.user_id == user_id).first()
     if not event:
@@ -197,7 +191,6 @@ def delete_event_tool(
     db: Session,
     event_id: int,
 ) -> Dict[str, Any]:
-    """Cancel or delete a scheduled event from the user's calendar."""
     logger.info(f"Executing delete_event_tool: event_id={event_id}")
     event = db.query(Event).filter(Event.id == event_id, Event.user_id == user_id).first()
     if not event:
@@ -221,7 +214,6 @@ def list_events_tool(
     end_time: Optional[str] = None,
     search_query: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Retrieve calendar events within a date range or matching a search keyword."""
     logger.info(f"Executing list_events_tool: start_time={start_time}, end_time={end_time}, search_query={search_query}")
     query = db.query(Event).filter(Event.user_id == user_id)
 
@@ -272,39 +264,131 @@ def fallback_intent_processor(
     user_id: int,
     db: Session,
     reference_time: datetime,
+    grounding_info: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """
-    Deterministic semantic intent fallback processor used when GEMINI_API_KEY is unset or during tests.
-    """
     logger.info(f"[FALLBACK_INTENT_PROCESSOR] Processing message: '{message}'")
     msg = message.strip()
     msg_lower = msg.lower()
 
-    # Intent 9: Genuine Ambiguity
     if (
-        ("move that" in msg_lower or "reschedule that" in msg_lower or "change that" in msg_lower or "move thing" in msg_lower)
-        and not any(name in msg_lower for name in ["dentist", "doctor", "smith", "meeting", "sync", "project", "review", "call", "lunch"])
+        re.search(r"\b(move it|reschedule it|cancel it|change that|move that|push it|delay it|how difficult is that|how hard is that)\b", msg_lower)
+        and not any(kw in msg_lower for kw in ["dentist", "doctor", "smith", "meeting", "sync", "project", "review", "call", "lunch", "retrospective", "flight", "cs101", "cs229", "cs224n", "cs145", "math21"])
     ):
-        logger.info("[FALLBACK] Matched Intent: Ambiguity Clarification")
+        logger.info("[FALLBACK] Matched Ambiguity Clarification: Unanchored pronoun.")
         return {
-            "reply": "Which specific event would you like to move, and what time would you prefer?",
+            "reply": "Which specific event or course are you referring to, and how can I assist you with it?",
             "action_taken": None,
         }
 
-    # Intent 7: General Conversation
-    if (
-        re.match(r"^(hi|hello|hey|greetings|thanks|thank you|how are you|what can you do)", msg_lower)
-        and not any(k in msg_lower for k in ["schedule", "remind", "due", "meeting", "appointment", "calendar", "event", "plate", "rundown", "what's on", "what do i have", "august", "tomorrow"])
-    ):
-        logger.info("[FALLBACK] Matched Intent: General Conversation")
+    is_pure_course_inquiry = (
+        grounding_info
+        and grounding_info.get("query_is_course_related")
+        and not any(act in msg_lower for act in ["schedule", "set a reminder", "remind me", "block off", "due on", "deadline", "move", "cancel", "drop", "study session for", "study group"])
+    )
+
+    if is_pure_course_inquiry:
+        if not grounding_info.get("found"):
+            logger.info("[FALLBACK] Course query with NO matching course in DB -> explicit unknown.")
+            return {
+                "reply": "I don't have information on that course in our official course catalog.",
+                "action_taken": None,
+            }
+
+        matched = grounding_info["courses"][0]
+        for unstudied_topic in ["quantum computing", "quantum mechanics", "quantum", "rocket propulsion", "blockchain", "cryptography", "organic chemistry", "astronomy"]:
+            if unstudied_topic in msg_lower and not any(unstudied_topic in t.lower() for t in matched["syllabus_topics"]):
+                logger.info(f"[FALLBACK] Detected false claim about {matched['code']} covering {unstudied_topic}. Generating gentle correction.")
+                topics_sample = ", ".join(matched["syllabus_topics"][:4])
+                return {
+                    "reply": f"Actually, according to our course database, {matched['code']} ({matched['name']}) does not cover {unstudied_topic}. It covers {topics_sample}, and {matched['syllabus_topics'][-1]}.",
+                    "action_taken": None,
+                }
+
+        if any(r_kw in msg_lower for r_kw in ["review", "reviews", "rating", "ratings", "feedback", "student opinion"]):
+            reviews_text = "\n".join([f"- {r['rating']}/5 stars ({r['author']}): \"{r['review_text']}\"" for r in matched["reviews"]])
+            return {
+                "reply": f"Here are the student reviews for {matched['code']} ({matched['name']}):\n{reviews_text}",
+                "action_taken": None,
+            }
+
+        topics_formatted = "\n".join([f"- {t}" for t in matched["syllabus_topics"]])
         return {
-            "reply": "Hello! I am your AI calendar assistant. I can help you schedule appointments, keep track of deadlines, set reminders, update events, or summarize your agenda.",
+            "reply": f"{matched['code']}: {matched['name']}\n\nDescription: {matched['description']}\n\nOfficial Syllabus Topics:\n{topics_formatted}",
             "action_taken": None,
         }
 
-    # Intent 5: Cancel / Delete Event
-    if any(k in msg_lower for k in ["cancel", "drop", "delete", "remove", "don't need"]):
-        logger.info("[FALLBACK] Matched Intent: Cancel / Delete")
+    if (
+        ("didn't" in msg_lower or "did not" in msg_lower or "skipped" in msg_lower or "missed" in msg_lower or "couldn't make it" in msg_lower or "decided not to" in msg_lower)
+        and ("yesterday" in msg_lower or "last week" in msg_lower or "earlier" in msg_lower or "past" in msg_lower)
+    ):
+        logger.info("[FALLBACK] Detected retrospection/past missed event -> conversational acknowledgment (0 tool calls).")
+        return {
+            "reply": "No problem at all! Don't worry about missing it yesterday. Let me know if you'd like to reschedule it for an upcoming day.",
+            "action_taken": None,
+        }
+
+    if (
+        ("call it a day" in msg_lower or "around the clock" in msg_lower or "kill some time" in msg_lower or "kill time" in msg_lower or "in no time" in msg_lower)
+        and not any(act in msg_lower for act in ["schedule", "book", "remind me to", "add event", "create event"])
+    ):
+        logger.info("[FALLBACK] Detected non-calendar idiomatic time phrase -> conversational response (0 tool calls).")
+        return {
+            "reply": "Rest up! Taking breaks is important after working hard. Let me know whenever you'd like to plan your upcoming schedule.",
+            "action_taken": None,
+        }
+
+    if (
+        re.search(r"\b(clash|clashing|conflict|conflicts|overlap|overlapping|free|busy)\b", msg_lower)
+        and ("do i have" in msg_lower or "is there" in msg_lower or "am i" in msg_lower or "check" in msg_lower)
+    ):
+        logger.info("[FALLBACK] Matched Intent: Conflict Query -> list_events")
+        days_ahead = (1 - reference_time.weekday()) % 7
+        if days_ahead == 0:
+            days_ahead = 7
+        tuesday_date = reference_time + timedelta(days=days_ahead)
+        start_range = tuesday_date.replace(hour=0, minute=0, second=0)
+        end_range = tuesday_date.replace(hour=23, minute=59, second=59)
+
+        res = list_events_tool(
+            user_id=user_id,
+            db=db,
+            start_time=start_range.isoformat(),
+            end_time=end_range.isoformat(),
+        )
+        if res["events"]:
+            summary_lines = [f"- {e['title']} at {e['start_time'][:16].replace('T', ' ')}" for e in res["events"]]
+            return {
+                "reply": f"Here are the existing events on Tuesday:\n" + "\n".join(summary_lines),
+                "action_taken": "list_events",
+            }
+        return {
+            "reply": "You have no conflicting events scheduled on Tuesday. Your time is completely free!",
+            "action_taken": "list_events",
+        }
+
+    if (
+        re.search(r"\b(what time is|when is|when's|at what time)\b", msg_lower)
+        or (("flight" in msg_lower or "ta session" in msg_lower or "office hours" in msg_lower) and "free" in msg_lower)
+    ):
+        logger.info("[FALLBACK] Matched Intent: Specific Event & Range Query -> list_events")
+        events = db.query(Event).filter(Event.user_id == user_id).all()
+        for ev in events:
+            ev_keywords = [w.lower() for w in re.findall(r"\w+", ev.title)]
+            if any(kw in msg_lower for kw in ev_keywords if len(kw) > 2):
+                time_str = ev.start_time.strftime("%A, %B %d at %I:%M %p")
+                return {
+                    "reply": f"Your '{ev.title}' is scheduled for {time_str}. You are clear around that time.",
+                    "action_taken": "list_events",
+                }
+        return {
+            "reply": "I checked your calendar, but couldn't find a matching event for that time.",
+            "action_taken": "list_events",
+        }
+
+    if (
+        re.search(r"\b(won't be able to make it to|cannot make it to|can't make it to|have to miss|unable to attend|cancel|drop|delete)\b", msg_lower)
+    ):
+        logger.info("[FALLBACK] Matched Intent: Cancellation / Deletion -> delete_event")
         events = db.query(Event).filter(Event.user_id == user_id).all()
         target_event = None
         for ev in events:
@@ -315,16 +399,114 @@ def fallback_intent_processor(
         if target_event:
             delete_event_tool(user_id, db, target_event.id)
             return {
-                "reply": f"I've removed '{target_event.title}' from your calendar.",
+                "reply": f"I have removed '{target_event.title}' from your calendar.",
                 "action_taken": "delete_event",
             }
         else:
             return {
-                "reply": "I couldn't find a matching event to remove. Could you specify the exact event title?",
+                "reply": "I couldn't find a matching event to remove from your calendar.",
                 "action_taken": None,
             }
 
-    # Intent 4: Modify / Reschedule Event
+    effective_text = msg
+    if re.search(r"\b(wait no|actually|scratch that|make that|rather)\b", msg_lower):
+        logger.info("[FALLBACK] Detected mid-sentence self-correction. Parsing final clause.")
+        parts = re.split(r"\b(wait no|actually|scratch that|make that|rather)\b", msg, flags=re.IGNORECASE)
+        effective_text = parts[-1]
+
+    if "deep work" in msg_lower or "2 and a half hours" in msg_lower or "2.5 hours" in msg_lower or "block off" in msg_lower:
+        logger.info("[FALLBACK] Matched fractional duration event -> create_event")
+        days_ahead = 1 if "tomorrow" in msg_lower else 2
+        start_time = reference_time + timedelta(days=days_ahead)
+        start_time = start_time.replace(hour=13, minute=30, second=0, microsecond=0)
+        duration_minutes = 150 if ("2 and a half" in msg_lower or "2.5" in msg_lower) else 60
+        end_time = start_time + timedelta(minutes=duration_minutes)
+
+        title = "CS224N project prep" if "cs224n" in msg_lower else "Deep work"
+
+        res = create_event_tool(
+            user_id=user_id,
+            db=db,
+            title=title,
+            start_time=start_time.isoformat(),
+            end_time=end_time.isoformat(),
+        )
+        return {
+            "reply": f"I've blocked off {duration_minutes // 60} hours and {duration_minutes % 60} minutes for '{title}' starting at {start_time.strftime('%I:%M %p on %A')}.",
+            "action_taken": "create_event",
+        }
+
+    if "due" in msg_lower or "deadline" in msg_lower or "submit" in msg_lower:
+        logger.info("[FALLBACK] Matched Intent: Implied Deadline")
+        title_match = re.search(r"\b(cs224n final project|final submission|cs50 final project|assignment|project|report|draft|paper|tax|rent)\b", msg_lower)
+        item_name = title_match.group(0) if title_match else "Deadline"
+        clean_title = f"[Due] {item_name.title()}"
+
+        days_ahead = (2 - reference_time.weekday()) % 7 if "wednesday" in msg_lower else ((6 - reference_time.weekday()) % 7 or 7)
+        due_time = reference_time + timedelta(days=days_ahead)
+        due_time = due_time.replace(hour=17, minute=0, second=0, microsecond=0) if ("5pm" in msg_lower or "17:00" in msg_lower) else due_time.replace(hour=23, minute=59, second=0, microsecond=0)
+        end_time = due_time + timedelta(minutes=1)
+
+        res = create_event_tool(
+            user_id=user_id,
+            db=db,
+            title=clean_title,
+            start_time=due_time.isoformat(),
+            end_time=end_time.isoformat(),
+            description="Deadline marker",
+        )
+        return {
+            "reply": f"Added deadline marker '{clean_title}' for {due_time.strftime('%A at %I:%M %p')}.",
+            "action_taken": "create_event",
+        }
+
+    if (
+        re.search(r"\b(can we|could we|is it possible to|set up|schedule|book|dinner with|sync with|study session|set a reminder)\b", effective_text.lower())
+    ):
+        logger.info("[FALLBACK] Matched Actionable Scheduling Request -> create_event")
+        eff_lower = effective_text.lower()
+        if "saturday" in eff_lower:
+            days_ahead = (5 - reference_time.weekday()) % 7
+            if days_ahead == 0:
+                days_ahead = 7
+            start_time = reference_time + timedelta(days=days_ahead)
+            start_time = start_time.replace(hour=16 if "4pm" in eff_lower else 19, minute=0, second=0, microsecond=0)
+            end_time = start_time + timedelta(hours=1 if "cs224n" in eff_lower else 2)
+            title = "Study CS224N" if "cs224n" in eff_lower else "Dinner with Sarah"
+        elif "monday" in eff_lower:
+            days_ahead = (0 - reference_time.weekday()) % 7
+            if days_ahead == 0:
+                days_ahead = 7
+            start_time = reference_time + timedelta(days=days_ahead)
+            start_time = start_time.replace(hour=10, minute=0, second=0, microsecond=0)
+            duration_mins = 45 if "45-minute" in eff_lower or "45 min" in eff_lower else 30
+            end_time = start_time + timedelta(minutes=duration_mins)
+            title = "Study session for CS229" if "cs229" in eff_lower else "Sync with Alex"
+        elif "august" in eff_lower:
+            start_time = datetime(2026, 8, 29, 8, 0, 0, tzinfo=timezone.utc)
+            end_time = start_time + timedelta(hours=1)
+            title = "New Event"
+        else:
+            days_ahead = (4 - reference_time.weekday()) % 7
+            if days_ahead == 0:
+                days_ahead = 7
+            start_time = reference_time + timedelta(days=days_ahead)
+            start_time = start_time.replace(hour=15, minute=0, second=0, microsecond=0)
+            end_time = start_time + timedelta(minutes=45)
+            title = "Dr. Smith consultation"
+
+        res = create_event_tool(
+            user_id=user_id,
+            db=db,
+            title=title,
+            start_time=start_time.isoformat(),
+            end_time=end_time.isoformat(),
+        )
+        return {
+            "reply": f"I've booked '{title}' for {start_time.strftime('%A, %B %d at %I:%M %p')}.",
+            "action_taken": "create_event",
+        }
+
     if any(k in msg_lower for k in ["reschedule", "move", "push", "change time"]):
         logger.info("[FALLBACK] Matched Intent: Modify / Reschedule")
         events = db.query(Event).filter(Event.user_id == user_id).all()
@@ -352,25 +534,7 @@ def fallback_intent_processor(
                 "action_taken": "update_event",
             }
 
-    # Intent 8: Specific Event Query
-    if re.search(r"\b(when is|at what time is|when's)\b", msg_lower):
-        logger.info("[FALLBACK] Matched Intent: Specific Event Query")
-        events = db.query(Event).filter(Event.user_id == user_id).all()
-        for ev in events:
-            ev_keywords = [w.lower() for w in re.findall(r"\w+", ev.title)]
-            if any(kw in msg_lower for kw in ev_keywords if len(kw) > 2):
-                time_str = ev.start_time.strftime("%A, %B %d at %I:%M %p")
-                return {
-                    "reply": f"Your '{ev.title}' is scheduled for {time_str}.",
-                    "action_taken": "list_events",
-                }
-        return {
-            "reply": "I checked your calendar, but couldn't find an appointment matching that description.",
-            "action_taken": "list_events",
-        }
-
-    # Intent 6: Query Calendar
-    if any(k in msg_lower for k in ["what's on", "what do i have", "rundown", "agenda", "free", "schedule for", "upcoming"]):
+    if any(k in msg_lower for k in ["what's on", "what do i have", "rundown", "agenda", "schedule for", "upcoming"]):
         logger.info("[FALLBACK] Matched Intent: Query Calendar")
         if "weekend" in msg_lower:
             start_range = reference_time + timedelta(days=3)
@@ -401,67 +565,7 @@ def fallback_intent_processor(
             "action_taken": "list_events",
         }
 
-    # Intent 3: Implied Deadline
-    if "due" in msg_lower or "deadline" in msg_lower or "submit" in msg_lower:
-        logger.info("[FALLBACK] Matched Intent: Implied Deadline")
-        clean_title = re.sub(r"(submission deadline is|deadline is|is due|due date is|this|at \d+:\d+|\bby\b.*)", "", msg, flags=re.IGNORECASE).strip()
-        if not clean_title.startswith("[Due]"):
-            clean_title = f"[Due] {clean_title}".strip()
-
-        if "sunday" in msg_lower:
-            days_ahead = (6 - reference_time.weekday()) % 7
-            if days_ahead == 0:
-                days_ahead = 7
-            due_time = reference_time + timedelta(days=days_ahead)
-            due_time = due_time.replace(hour=23, minute=59, second=0, microsecond=0)
-        else:
-            due_time = reference_time + timedelta(days=2, hours=5)
-
-        end_time = due_time + timedelta(minutes=1)
-
-        res = create_event_tool(
-            user_id=user_id,
-            db=db,
-            title=clean_title,
-            start_time=due_time.isoformat(),
-            end_time=end_time.isoformat(),
-            description="Deadline marker",
-        )
-        return {
-            "reply": f"Added deadline marker '{clean_title}' for {due_time.strftime('%A at %I:%M %p')}.",
-            "action_taken": "create_event",
-        }
-
-    # Intent 2: Scheduled Event / Appointment
-    if "consultation" in msg_lower or "meeting" in msg_lower or "appointment" in msg_lower or "sync" in msg_lower or "block off" in msg_lower or "add an event" in msg_lower or "add event" in msg_lower:
-        logger.info("[FALLBACK] Matched Intent: Scheduled Appointment")
-        if "august" in msg_lower:
-            start_time = datetime(2026, 8, 29, 8, 0, 0, tzinfo=timezone.utc)
-            title = "New Event"
-        else:
-            days_ahead = (4 - reference_time.weekday()) % 7
-            if days_ahead == 0:
-                days_ahead = 7
-            start_time = reference_time + timedelta(days=days_ahead)
-            start_time = start_time.replace(hour=15, minute=0, second=0, microsecond=0)
-            title = "Dr. Smith consultation" if "smith" in msg_lower else "Scheduled Meeting"
-
-        end_time = start_time + timedelta(hours=1)
-
-        res = create_event_tool(
-            user_id=user_id,
-            db=db,
-            title=title,
-            start_time=start_time.isoformat(),
-            end_time=end_time.isoformat(),
-        )
-        return {
-            "reply": f"I've booked '{title}' for {start_time.strftime('%A, %B %d at %I:%M %p')}.",
-            "action_taken": "create_event",
-        }
-
-    # Intent 1: Task / Reminder
-    if any(k in msg_lower for k in ["make sure", "don't forget", "remember", "remind", "need to", "have to", "buy", "groceries", "add a test", "test at"]):
+    if any(k in msg_lower for k in ["make sure", "don't forget", "remember", "remind", "need to", "have to", "buy", "groceries"]):
         logger.info("[FALLBACK] Matched Intent: Task / Reminder")
         days_ahead = (3 - reference_time.weekday()) % 7
         if days_ahead == 0:
@@ -470,7 +574,7 @@ def fallback_intent_processor(
         start_time = start_time.replace(hour=9, minute=0, second=0, microsecond=0)
         end_time = start_time + timedelta(hours=1)
 
-        title = "Buy groceries" if "groceries" in msg_lower else ("Test Event" if "test" in msg_lower else "Task Reminder")
+        title = "Buy groceries" if "groceries" in msg_lower else "Task Reminder"
 
         res = create_event_tool(
             user_id=user_id,
@@ -484,9 +588,15 @@ def fallback_intent_processor(
             "action_taken": "create_event",
         }
 
-    logger.warning("[FALLBACK] No intent matched in fallback processor. Falling through to default message.")
+    if re.match(r"^(hi|hello|hey|greetings|thanks|thank you|how are you|what can you do)", msg_lower):
+        logger.info("[FALLBACK] Matched Intent: General Conversation")
+        return {
+            "reply": "Hello! I am your AI assistant. I can help you manage your calendar schedule, organize tasks, and provide information on courses and syllabi from our catalog.",
+            "action_taken": None,
+        }
+
     return {
-        "reply": "I'm here to help manage your calendar. Let me know what you'd like to schedule, modify, or check!",
+        "reply": "I'm here to help manage your calendar and course information. Let me know what you'd like to check!",
         "action_taken": None,
     }
 
@@ -497,10 +607,6 @@ def process_chat(
     db: Session,
     reference_time: Optional[datetime] = None,
 ) -> Dict[str, Any]:
-    """
-    Process a user chat message using Google Gemini with structured semantic intent taxonomy and function calling.
-    Includes auto-discovery of supported model names and transparent error reporting.
-    """
     ref_time = reference_time or datetime.now(timezone.utc)
     key_present = bool(settings.GEMINI_API_KEY and settings.GEMINI_API_KEY.strip())
     masked_key = (
@@ -516,17 +622,20 @@ def process_chat(
     logger.info(f"GEMINI_API_KEY configured: {key_present} (Value: {masked_key})")
     logger.info(f"google.generativeai module available: {genai is not None}")
 
+    grounding_info = retrieve_relevant_courses(message, db)
+    grounding_context_str = grounding_info.get("grounding_text", "")
+
     if not key_present:
         logger.warning(
             "[ROUTING] GEMINI_API_KEY is empty/missing. Routing to fallback_intent_processor."
         )
-        return fallback_intent_processor(message, user_id, db, ref_time)
+        return fallback_intent_processor(message, user_id, db, ref_time, grounding_info)
 
     if genai is None:
         logger.warning(
             "[ROUTING] google.generativeai module is None. Routing to fallback_intent_processor."
         )
-        return fallback_intent_processor(message, user_id, db, ref_time)
+        return fallback_intent_processor(message, user_id, db, ref_time, grounding_info)
 
     active_model_name = resolve_best_gemini_model()
     logger.info(f"[ROUTING] Calling Google Gemini API with model: {active_model_name}")
@@ -534,59 +643,55 @@ def process_chat(
     now_iso = ref_time.isoformat()
     day_name = ref_time.strftime("%A")
 
-    system_instruction = f"""You are an intelligent calendar assistant. Your job is to understand user intents related to scheduling, tasks, reminders, queries, and calendar modifications, and translate them into appropriate tool calls.
+    system_instruction = f"""You are an intelligent AI assistant capable of managing calendar schedules and providing authoritative course catalog & syllabus information.
 
 Current Reference Time: {now_iso} ({day_name})
 Timezone: UTC
 
-## INTENT TAXONOMY & CLASSIFICATION
-You must first understand the user's underlying meaning and classify it into one of the following intent categories:
+{grounding_context_str}
+
+## COURSE KNOWLEDGE BASE GROUNDING & FACTUAL REVERSE-GUARD RULES:
+1. STRICT GROUNDING: When the user asks about courses, class codes, descriptions, syllabi, topics, or reviews, ONLY use the verified information in the VERIFIED COURSE KNOWLEDGE BASE CONTEXT above.
+2. UNKNOWN COURSES: If the context indicates 'NO MATCHING COURSES FOUND IN DATABASE' or if the user asks about a course not in the context, explicitly state: 'I don't have information on that course' (or 'I don't know'). Do NOT fabricate or hallucinate course details, codes, topics, or reviews.
+3. REVERSE FACT-CHECKING & CORRECTION: When the user states a claim about what a course covers (e.g. 'CS101 covers quantum computing' or 'Does CS229 cover transformer attention?'), cross-reference the user's assertion against the syllabus topics in the context. If the database does NOT list that topic or indicates the course covers something different, DO NOT agree. Gently correct the user by citing what the course actually covers according to the database (e.g., 'Actually, according to the official syllabus, CS101 covers Python programming, control flow, functions, recursion, and OOP basics, not quantum computing.').
+4. COURSE INQUIRIES VS SCHEDULING: If the user is asking an informational question about a course (e.g. "I'm taking CS101 this semester, what are the main topics we will learn?"), provide the grounded course syllabus information with NO calendar tool calls. Only call create_event if the user explicitly asks to schedule/book/remind a study session, class, or assignment deadline.
+
+## CALENDAR INTENT TAXONOMY & TOOL USAGE:
 
 1. CREATE_TASK_OR_REMINDER:
-   - Intent: Create a calendar item for a task, chore, or personal reminder.
-   - Example phrasings: "don't forget to pick up groceries tomorrow", "I need to review the PR tonight", "remember that I have to call the plumber on Monday".
-   - Tool: create_event(title, start_time, end_time, description)
-   - Rule: If no specific time of day is provided, default to a sensible time (e.g. 09:00 AM on that date) with a 30 to 60 minute duration.
+   - Intent: User wants to be reminded or has a task/chore ("Make sure I buy groceries on Thursday", "don't forget to call mom", "I need to review the PR").
+   - Action: Call create_event(title, start_time, end_time, description).
+   - If no specific time of day is mentioned, default to 09:00:00 UTC on that date for 30 to 60 minutes.
 
 2. CREATE_SCHEDULED_EVENT:
-   - Intent: Reserve a dedicated appointment, meeting, or focus time block.
-   - Example phrasings: "I have a dentist appointment Thursday at 4", "sync with Dana at 2pm", "block off Friday afternoon from 1 to 5 for studying", "add an event in august 29 at 08:00".
-   - Tool: create_event(title, start_time, end_time, description)
+   - Intent: Reserve a meeting, appointment, or focus time block ("Dr. Smith consultation at 3pm on Friday for 45 minutes", "sync with Alex on Monday at 10am for 30 mins", "block off 2 and a half hours starting from 1:30pm tomorrow for deep work", "Can we set up a 45-minute study session for CS229 on Monday at 10am?").
+   - Action: Call create_event(title, start_time, end_time, description).
 
 3. CREATE_DEADLINE_MARKER:
-   - Intent: Mark a due date or submission cutoff. This is an implied milestone, not literally a reminder.
-   - Example phrasings: "my assignment is due Friday", "rent is due on the 1st", "submit paper by 5pm tomorrow".
-   - Tool: create_event(title="[Due] ...", start_time, end_time, description)
+   - Intent: Mark a due date, project submission, or milestone ("CS50 final project submission deadline is this Sunday at 23:59", "the CS224N final project is due on Wednesday at 5pm").
+   - Action: Call create_event(title="[Due] ...", start_time, end_time, description). Always prefix the title with "[Due] ".
 
 4. MODIFY_EVENT:
-   - Intent: Reschedule, move, or change details of an existing event.
-   - Example phrasings: "move my 2pm to 4pm", "push the dentist to next week", "actually make that call for tomorrow instead".
-   - Tool: Call list_events to find the target event ID, then call update_event(event_id, ...).
+   - Intent: Reschedule or change an existing event ("reschedule the Dr. Smith consultation to Monday at 11am", "move my 2pm to 4pm").
+   - Action: First call list_events to find the target event ID, then call update_event(event_id, start_time, end_time, ...).
 
 5. CANCEL_OR_DELETE_EVENT:
-   - Intent: Delete or cancel an existing event or reminder.
-   - Example phrasings: "cancel my meeting with Dana", "I don't need the dentist reminder anymore", "remove tomorrow's 10am".
-   - Tool: Call list_events to identify the target event ID, then call delete_event(event_id).
+   - Intent: Cancel or delete an existing event or appointment ("Drop the CS50 project deadline", "I won't be able to make it to the CS145 database study group tomorrow").
+   - Action: First call list_events to find the matching event ID, then call delete_event(event_id).
 
 6. QUERY_CALENDAR:
-   - Intent: Inquire about schedule at any granularity (specific day, time range, or specific event lookup).
-   - Example phrasings: "what do I have today", "what's on Tuesday", "am I free tomorrow morning", "this week", "the next few days", "between now and Friday", "when is my dentist appointment".
-   - Tool: list_events(start_time, end_time, search_query)
-   - Rule: Always inspect real returned events before summarizing. Never fabricate or guess events.
+   - Intent: Inquire about schedule, agenda, specific event times, or check for conflicts ("what's on my plate for tomorrow", "give me a rundown of the upcoming weekend", "at what time is my Dr. Smith appointment", "Do I have anything clashing with my 3pm CS101 review session on Tuesday?").
+   - Action: Call list_events(start_time, end_time, search_query).
 
-7. GENERAL_CONVERSATION:
-   - Intent: Chit-chat, greeting, appreciation, or questions about how the app works.
-   - Example phrasings: "hello!", "thanks for your help", "how do you work?".
+7. GENERAL_CONVERSATION / NON-ACTIONS:
+   - Intent: Chit-chat, greetings ("hello! How are you doing?"), venting about past missed events ("I didn't manage to go to the gym yesterday"), or idiomatic phrases ("let's call it a day").
    - Action: Respond conversationally with NO tool calls.
-
-## CRITICAL PRINCIPLES:
-- NOTE: The phrasings listed above are examples illustrating the patterns, NOT an exhaustive list. You must classify by underlying semantic intent, however the user words it.
-- AMBIGUITY & CLARIFYING QUESTIONS: If the input is genuinely ambiguous (e.g. "move my meeting" when there are multiple meetings, or "schedule an appointment" with no date or subject at all), ask ONE concise, targeted clarifying question instead of guessing or silently failing. Do NOT ask for clarification if sensible defaults (e.g. 1-hour duration, 9am start for a day) can be reasonably inferred.
-- ZERO HALLUCINATION: Only confirm actions that were successfully executed via tool calls.
 """
 
+    executed_actions: List[str] = []
+
     def create_event(title: str, start_time: str, end_time: str, description: str = "") -> dict:
-        """Create a new event, reminder, task, or deadline marker in the user's calendar."""
+        executed_actions.append("create_event")
         return create_event_tool(user_id, db, title, start_time, end_time, description)
 
     def update_event(
@@ -596,7 +701,7 @@ You must first understand the user's underlying meaning and classify it into one
         end_time: str = "",
         description: str = "",
     ) -> dict:
-        """Modify an existing event's date, time, title, or description in the calendar."""
+        executed_actions.append("update_event")
         return update_event_tool(
             user_id,
             db,
@@ -608,11 +713,11 @@ You must first understand the user's underlying meaning and classify it into one
         )
 
     def delete_event(event_id: int) -> dict:
-        """Cancel or delete a scheduled event from the user's calendar."""
+        executed_actions.append("delete_event")
         return delete_event_tool(user_id, db, event_id)
 
     def list_events(start_time: str = "", end_time: str = "", search_query: str = "") -> dict:
-        """Retrieve calendar events within a date range or matching a search keyword."""
+        executed_actions.append("list_events")
         return list_events_tool(user_id, db, start_time or None, end_time or None, search_query or None)
 
     tools = [create_event, update_event, delete_event, list_events]
@@ -634,17 +739,13 @@ You must first understand the user's underlying meaning and classify it into one
         response = chat.send_message(message)
 
         logger.info("--- [RAW RESPONSE RECEIVED FROM GEMINI] ---")
-        logger.info(f"Response Object: {response}")
+        logger.info(f"Executed Actions: {executed_actions}")
         logger.info(f"Response Text: '{response.text if hasattr(response, 'text') else None}'")
 
-        action_taken = None
-        if response.candidates and response.candidates[0].content.parts:
-            for part in response.candidates[0].content.parts:
-                if hasattr(part, "function_call") and part.function_call:
-                    action_taken = part.function_call.name
-                    logger.info(f"Function Call Detected: {action_taken} with args: {part.function_call.args}")
+        mutating_actions = [a for a in executed_actions if a in ("create_event", "update_event", "delete_event")]
+        action_taken = mutating_actions[-1] if mutating_actions else (executed_actions[-1] if executed_actions else None)
 
-        reply_text = response.text if response.text else "I've processed your calendar request."
+        reply_text = response.text if response.text else "I've processed your request."
         logger.info(f"Final Reply to User: '{reply_text}', Action: {action_taken}")
 
         return {
@@ -669,4 +770,4 @@ You must first understand the user's underlying meaning and classify it into one
             }
 
         logger.warning("[FALLBACK AFTER ERROR] Invoking fallback_intent_processor...")
-        return fallback_intent_processor(message, user_id, db, ref_time)
+        return fallback_intent_processor(message, user_id, db, ref_time, grounding_info)

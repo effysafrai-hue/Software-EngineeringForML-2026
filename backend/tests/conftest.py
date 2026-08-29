@@ -1,13 +1,16 @@
 import pytest
+from datetime import datetime, timezone, timedelta
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.db.session import Base, get_db
 from app.main import app
-from app.models import User, Event, ChatMessage
+from app.db.session import Base, get_db
+from app.core.security import get_password_hash, create_access_token
+from app.models.user import User
 
+# In-memory SQLite for high-speed, isolated test execution
 SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
 
 engine = create_engine(
@@ -21,11 +24,30 @@ TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engin
 @pytest.fixture(scope="function")
 def db_session():
     Base.metadata.create_all(bind=engine)
-    db = TestingSessionLocal()
+    session = TestingSessionLocal()
     try:
-        yield db
+        # Seed test users
+        user_a = User(
+            id=1,
+            email="user_a@example.com",
+            hashed_password=get_password_hash("Password123!"),
+        )
+        user_b = User(
+            id=2,
+            email="user_b@example.com",
+            hashed_password=get_password_hash("Password123!"),
+        )
+        user_c = User(
+            id=3,
+            email="user_c@example.com",
+            hashed_password=get_password_hash("Password123!"),
+        )
+        session.add_all([user_a, user_b, user_c])
+        session.commit()
+
+        yield session
     finally:
-        db.close()
+        session.close()
         Base.metadata.drop_all(bind=engine)
 
 
@@ -38,38 +60,24 @@ def client(db_session):
             pass
 
     app.dependency_overrides[get_db] = override_get_db
-    app.state.limiter.enabled = False
-
     with TestClient(app) as test_client:
         yield test_client
-
     app.dependency_overrides.clear()
-    app.state.limiter.enabled = True
 
 
-@pytest.fixture(scope="function")
-def auth_headers_user_a(client):
-    client.post(
-        "/auth/signup",
-        json={"email": "usera@example.com", "password": "Password123!"},
-    )
-    login_resp = client.post(
-        "/auth/login",
-        json={"email": "usera@example.com", "password": "Password123!"},
-    )
-    token = login_resp.json()["access_token"]
+@pytest.fixture
+def auth_headers_user_a():
+    token = create_access_token(subject="1")
     return {"Authorization": f"Bearer {token}"}
 
 
-@pytest.fixture(scope="function")
-def auth_headers_user_b(client):
-    client.post(
-        "/auth/signup",
-        json={"email": "userb@example.com", "password": "Password123!"},
-    )
-    login_resp = client.post(
-        "/auth/login",
-        json={"email": "userb@example.com", "password": "Password123!"},
-    )
-    token = login_resp.json()["access_token"]
+@pytest.fixture
+def auth_headers_user_b():
+    token = create_access_token(subject="2")
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture
+def auth_headers_user_c():
+    token = create_access_token(subject="3")
     return {"Authorization": f"Bearer {token}"}
