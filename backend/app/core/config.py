@@ -15,6 +15,11 @@ class Settings(BaseSettings):
     RATE_LIMIT_LOGIN: str = "5/minute"
     RATE_LIMIT_SIGNUP: str = "5/minute"
 
+    # LLM Provider Configuration
+    LLM_PROVIDER: str = "ollama"  # "ollama" | "gemini"
+    OLLAMA_BASE_URL: str = "http://ollama:11434"
+    OLLAMA_MODEL: str = "llama3.1:8b"
+
     GEMINI_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-3.6-flash"
 

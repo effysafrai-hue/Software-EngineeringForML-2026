@@ -22,6 +22,7 @@ from app.schemas.shared_calendar import (
     SharedMemoryResponse,
 )
 from app.services.ai_agent import process_chat
+from app.services.chat_queue import chat_queue, Priority
 
 router = APIRouter(prefix="/shared-calendars", tags=["Shared Calendars"])
 
@@ -288,7 +289,7 @@ def create_shared_memory(
 
 # Scoped Shared Chat
 @router.post("/{calendar_id}/chat", response_model=ChatResponse)
-def send_shared_chat_message(
+async def send_shared_chat_message(
     calendar_id: int,
     chat_req: ChatRequest,
     db: Session = Depends(get_db),
@@ -351,7 +352,9 @@ def send_shared_chat_message(
     if memory_context:
         enriched_prompt = f"{chat_req.message}\n{memory_context}"
 
-    ai_result = process_chat(
+    ai_result = await chat_queue.submit(
+        Priority.SHARED_CALENDAR_CHAT,
+        process_chat,
         message=enriched_prompt,
         user_id=current_user.id,
         db=db,

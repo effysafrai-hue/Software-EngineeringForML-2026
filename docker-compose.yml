@@ -17,6 +17,35 @@ services:
       timeout: 5s
       retries: 5
 
+  ollama:
+    image: ollama/ollama:latest
+    container_name: se_ml_effy_ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_KEEP_ALIVE=24h
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  ollama-pull:
+    image: ollama/ollama:latest
+    container_name: se_ml_effy_ollama_pull
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+    entrypoint: >
+      sh -c "ollama pull llama3.1:8b"
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: "no"
+
   backend:
     build:
       context: ./backend
@@ -27,6 +56,9 @@ services:
     environment:
       - DATABASE_URL=${DATABASE_URL:-postgresql+psycopg://postgres:postgres@postgres:5432/se_ml_effy}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:-se_ml_effy_super_secret_jwt_key_change_in_production_32bytes}
+      - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://ollama:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.1:8b}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-3.6-flash}
       - CORS_ORIGINS=["http://localhost:5173", "http://127.0.0.1:5173"]
@@ -57,3 +89,5 @@ services:
 volumes:
   postgres_data:
     name: se_ml_effy_postgres_data
+  ollama_data:
+    name: se_ml_effy_ollama_data

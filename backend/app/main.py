@@ -8,6 +8,7 @@ from slowapi.errors import RateLimitExceeded
 from app.api.routes import auth, events, chat, shared_calendars, notifications
 from app.core.config import settings
 from app.core.limiter import limiter
+from app.services.chat_queue import chat_queue
 from app.services.notification_scheduler import start_scheduler, stop_scheduler
 
 logger = logging.getLogger("main")
@@ -15,17 +16,19 @@ logger = logging.getLogger("main")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup / shutdown lifecycle: launch the notification scheduler."""
-    logger.info("Starting notification scheduler...")
+    """Startup / shutdown lifecycle: launch scheduler and chat worker pool."""
+    logger.info("Starting notification scheduler and chat queue...")
     start_scheduler()
+    await chat_queue.start()
     yield
-    logger.info("Stopping notification scheduler...")
+    logger.info("Stopping notification scheduler and chat queue...")
+    await chat_queue.stop()
     stop_scheduler()
 
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
-    description="Full-stack SE_ML_effy FastAPI backend with JWT Auth, Shared Calendars, Notifications, Course Grounding & Gemini AI",
+    description="Full-stack SE_ML_effy FastAPI backend with JWT Auth, Shared Calendars, Notifications, Course Grounding, Ollama & Gemini AI",
     version="0.1.0",
     lifespan=lifespan,
 )

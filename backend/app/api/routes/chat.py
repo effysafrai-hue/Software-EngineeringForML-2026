@@ -8,12 +8,13 @@ from app.models.chat import ChatMessage
 from app.models.user import User
 from app.schemas.chat import ChatMessageResponse, ChatRequest, ChatResponse
 from app.services.ai_agent import process_chat
+from app.services.chat_queue import chat_queue, Priority
 
 router = APIRouter(prefix="/chat", tags=["AI Chat"])
 
 
 @router.post("", response_model=ChatResponse)
-def send_chat_message(
+async def send_chat_message(
     chat_req: ChatRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -32,7 +33,9 @@ def send_chat_message(
     db.add(user_msg)
     db.commit()
 
-    ai_result = process_chat(
+    ai_result = await chat_queue.submit(
+        Priority.INTERACTIVE_CHAT,
+        process_chat,
         message=chat_req.message,
         user_id=current_user.id,
         db=db,

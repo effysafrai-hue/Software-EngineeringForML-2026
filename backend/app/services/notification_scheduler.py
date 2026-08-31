@@ -132,5 +132,10 @@ def stop_scheduler():
     """Shut down the APScheduler gracefully."""
     global _scheduler
     if _scheduler:
-        _scheduler.shutdown(wait=False)
+        try:
+            if _scheduler.running:
+                _scheduler.shutdown(wait=False)
+        except Exception:
+            pass
+        _scheduler = None
         logger.info("[SCHEDULER] APScheduler stopped.")
