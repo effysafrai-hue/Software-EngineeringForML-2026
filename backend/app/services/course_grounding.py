@@ -83,6 +83,7 @@ def retrieve_relevant_courses(
     matched_courses: List[Course] = []
     seen_ids = set()
 
+    # Step 1: Extract and match explicit course codes
     code_matches = re.findall(r"\b([a-zA-Z]{2,5})\s?(\d{2,4}[a-zA-Z]?)\b", query)
     for prefix, number in code_matches:
         candidate_code = f"{prefix.upper()}{number.upper()}"
@@ -91,22 +92,39 @@ def retrieve_relevant_courses(
             matched_courses.append(course)
             seen_ids.add(course.id)
 
-    query_tokens = [w for w in re.findall(r"\w+", query.lower()) if len(w) > 2 and w not in ["the", "what", "does", "this", "that", "with", "from", "about", "where", "study"]]
+    # Step 2: Keyword search across title, description, and syllabus topics
+    stopwords = {
+        "the", "what", "does", "this", "that", "with", "from", "about",
+        "and", "for", "are", "how", "where", "who", "why", "can", "you",
+        "have", "has", "had", "was", "were", "will", "would", "could",
+        "should", "did", "not", "but", "also", "into", "its", "our",
+        "any", "all", "each", "some", "more", "most", "than", "then",
+        "when", "which", "there", "their", "them", "they", "been", "being",
+        "other", "out", "over", "own", "very", "just", "too", "only",
+        "need", "tell", "give", "know", "want", "study", "learn",
+    }
+    query_tokens = [w for w in re.findall(r"\w+", query.lower()) if len(w) > 2 and w not in stopwords]
     if query_tokens and len(matched_courses) < top_k:
         all_courses = db.query(Course).all()
+        scored_candidates: List[tuple] = []
         for course in all_courses:
             if course.id in seen_ids:
                 continue
             topics_text = " ".join([str(t).lower() for t in (course.syllabus_topics or [])])
             desc_text = course.description.lower()
             name_text = course.name.lower()
+            combined_text = f"{name_text} {desc_text} {topics_text}"
 
-            matches_count = sum(1 for token in query_tokens if token in topics_text or token in desc_text or token in name_text)
+            matches_count = sum(1 for token in query_tokens if token in combined_text)
             if matches_count >= 1:
-                matched_courses.append(course)
-                seen_ids.add(course.id)
+                scored_candidates.append((matches_count, course))
+
+        scored_candidates.sort(key=lambda x: x[0], reverse=True)
+        for _score, course in scored_candidates:
             if len(matched_courses) >= top_k:
                 break
+            matched_courses.append(course)
+            seen_ids.add(course.id)
 
     found = len(matched_courses) > 0
     grounding_blocks = []
