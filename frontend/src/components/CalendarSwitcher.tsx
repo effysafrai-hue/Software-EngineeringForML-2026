@@ -58,7 +58,15 @@ export const CalendarSwitcher: React.FC<CalendarSwitcherProps> = ({
         setShowInviteModal(false);
       }, 1500);
     } catch (err: any) {
-      alert(err.message || 'Failed to invite member');
+      if (err.status === 401) {
+        alert('Your login session has expired. Please log out and log back in.');
+      } else if (err.status === 404) {
+        alert(`User with email "${inviteEmail}" was not found. Please ensure they have registered an account.`);
+      } else if (err.status === 403) {
+        alert('You do not have permission to invite members to this calendar.');
+      } else {
+        alert(err.message || 'Failed to invite member');
+      }
     }
   };
 

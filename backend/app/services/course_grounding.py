@@ -55,6 +55,11 @@ def detect_course_query(message: str) -> bool:
         "prerequisite", "prerequisites", "cover", "covers", "taught", "teach",
         "teaches", "lecture", "lectures", "professor", "review", "reviews",
         "rating", "ratings", "assignment", "homework", "exam", "midterm",
+        "study", "learn", "topic", "topics", "subject", "material", "concepts",
+        "linear algebra", "eigenvalue", "eigenvalues", "matrix", "matrices",
+        "algebra", "calculus", "probability", "statistics", "math",
+        "machine learning", "deep learning", "neural", "nlp", "database", "databases",
+        "python", "programming", "algorithms", "data structures", "sql",
     ]
     return any(re.search(rf"\b{re.escape(k)}\b", msg) for k in keywords)
 
@@ -86,7 +91,7 @@ def retrieve_relevant_courses(
             matched_courses.append(course)
             seen_ids.add(course.id)
 
-    query_tokens = [w for w in re.findall(r"\w+", query.lower()) if len(w) > 2 and w not in ["the", "what", "does", "this", "that", "with", "from", "about"]]
+    query_tokens = [w for w in re.findall(r"\w+", query.lower()) if len(w) > 2 and w not in ["the", "what", "does", "this", "that", "with", "from", "about", "where", "study"]]
     if query_tokens and len(matched_courses) < top_k:
         all_courses = db.query(Course).all()
         for course in all_courses:
@@ -95,7 +100,7 @@ def retrieve_relevant_courses(
             topics_text = " ".join([str(t).lower() for t in (course.syllabus_topics or [])])
             desc_text = course.description.lower()
             name_text = course.name.lower()
-            
+
             matches_count = sum(1 for token in query_tokens if token in topics_text or token in desc_text or token in name_text)
             if matches_count >= 1:
                 matched_courses.append(course)

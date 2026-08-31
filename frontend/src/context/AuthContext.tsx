@@ -1,84 +1,52 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { api } from '../services/api';
+import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User } from '../types';
+import { api } from '../services/api';
 
 interface AuthContextType {
   user: User | null;
   accessToken: string | null;
-  isAuthenticated: boolean;
-  isLoading: boolean;
-  login: (email: string, password: string) => Promise<void>;
-  signup: (email: string, password: string) => Promise<void>;
+  login: (token: string, refreshToken: string, user: User) => void;
   logout: () => void;
+  loading: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const REFRESH_TOKEN_KEY = 'se_ml_effy_refresh_token';
-const ACCESS_TOKEN_KEY = 'se_ml_effy_access_token';
-
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
-  const [accessToken, setAccessToken] = useState<string | null>(() => {
-    return localStorage.getItem(ACCESS_TOKEN_KEY);
-  });
-  const [isLoading, setIsLoading] = useState<boolean>(true);
-
-  const loadUser = useCallback(async (token: string) => {
-    try {
-      const userData = await api.getMe(token);
-      setUser(userData);
-      setAccessToken(token);
-      localStorage.setItem(ACCESS_TOKEN_KEY, token);
-    } catch {
-      logout();
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    const storedToken = localStorage.getItem(ACCESS_TOKEN_KEY);
-    if (storedToken) {
-      loadUser(storedToken);
-    } else {
-      setIsLoading(false);
-    }
-  }, [loadUser]);
-
-  const login = async (email: string, password: string) => {
-    const tokens = await api.login({ email, password });
-    setAccessToken(tokens.access_token);
-    localStorage.setItem(ACCESS_TOKEN_KEY, tokens.access_token);
-    localStorage.setItem(REFRESH_TOKEN_KEY, tokens.refresh_token);
-    await loadUser(tokens.access_token);
-  };
-
-  const signup = async (email: string, password: string) => {
-    await api.signup({ email, password });
-    await login(email, password);
-  };
+  const [accessToken, setAccessToken] = useState<string | null>(() => localStorage.getItem('access_token'));
+  const [loading, setLoading] = useState(true);
 
   const logout = () => {
-    setUser(null);
+    localStorage.removeItem('access_token');
+    localStorage.removeItem('refresh_token');
     setAccessToken(null);
-    localStorage.removeItem(ACCESS_TOKEN_KEY);
-    localStorage.removeItem(REFRESH_TOKEN_KEY);
-    setIsLoading(false);
+    setUser(null);
+  };
+
+  useEffect(() => {
+    if (accessToken) {
+      api.getMe(accessToken)
+        .then(setUser)
+        .catch((err) => {
+          console.warn('Session expired or invalid, logging out:', err);
+          logout();
+        })
+        .finally(() => setLoading(false));
+    } else {
+      setLoading(false);
+    }
+  }, [accessToken]);
+
+  const login = (token: string, refreshToken: string, userData: User) => {
+    localStorage.setItem('access_token', token);
+    localStorage.setItem('refresh_token', refreshToken);
+    setAccessToken(token);
+    setUser(userData);
   };
 
   return (
-    <AuthContext.Provider
-      value={{
-        user,
-        accessToken,
-        isAuthenticated: !!user && !!accessToken,
-        isLoading,
-        login,
-        signup,
-        logout,
-      }}
-    >
+    <AuthContext.Provider value={{ user, accessToken, login, logout, loading }}>
       {children}
     </AuthContext.Provider>
   );
