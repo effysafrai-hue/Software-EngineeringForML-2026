@@ -8,6 +8,10 @@ import {
   SharedCalendar,
   SharedMemory,
   AppNotification,
+  Post,
+  Comment,
+  PostDetail,
+  FileUploadResponse,
 } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -231,6 +235,74 @@ export const api = {
     request<{ message: string }>(
       '/notifications/read-all',
       { method: 'PATCH' },
+      token
+    ),
+
+  // Forum & Media Uploads
+  uploadMedia: async (token: string, file: File): Promise<FileUploadResponse> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const headers: Record<string, string> = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    const res = await fetch(`${API_BASE_URL}/uploads`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new ApiError(res.status, errData.detail || 'Upload failed');
+    }
+    return res.json();
+  },
+
+  getPosts: (token: string, search?: string) => {
+    const params = search ? `?search=${encodeURIComponent(search)}` : '';
+    return request<Post[]>(`/posts${params}`, {}, token);
+  },
+
+  createPost: (
+    token: string,
+    data: { title: string; body: string; media_urls: string[]; anonymous: boolean }
+  ) =>
+    request<Post>(
+      '/posts',
+      {
+        method: 'POST',
+        body: JSON.stringify(data),
+      },
+      token
+    ),
+
+  getPostDetail: (token: string, postId: number) =>
+    request<PostDetail>(`/posts/${postId}`, {}, token),
+
+  deletePost: (token: string, postId: number) =>
+    request<void>(
+      `/posts/${postId}`,
+      { method: 'DELETE' },
+      token
+    ),
+
+  addComment: (
+    token: string,
+    postId: number,
+    data: { body: string; media_urls: string[]; anonymous: boolean }
+  ) =>
+    request<Comment>(
+      `/posts/${postId}/comments`,
+      {
+        method: 'POST',
+        body: JSON.stringify(data),
+      },
+      token
+    ),
+
+  deleteComment: (token: string, commentId: number) =>
+    request<void>(
+      `/comments/${commentId}`,
+      { method: 'DELETE' },
       token
     ),
 };

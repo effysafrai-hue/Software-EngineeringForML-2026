@@ -1,11 +1,13 @@
+import os
 import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
-from app.api.routes import auth, events, chat, shared_calendars, notifications
+from app.api.routes import auth, events, chat, shared_calendars, notifications, forum
 from app.core.config import settings
 from app.core.limiter import limiter
 from app.services.chat_queue import chat_queue
@@ -28,7 +30,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
-    description="Full-stack SE_ML_effy FastAPI backend with JWT Auth, Shared Calendars, Notifications, Course Grounding, Ollama & Gemini AI",
+    description="Full-stack SE_ML_effy FastAPI backend with JWT Auth, Shared Calendars, Notifications, Forum, Course Grounding, Ollama & Gemini AI",
     version="0.1.0",
     lifespan=lifespan,
 )
@@ -44,11 +46,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Mount uploads static directory
+os.makedirs("uploads", exist_ok=True)
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+
 app.include_router(auth.router)
 app.include_router(events.router)
 app.include_router(chat.router)
 app.include_router(shared_calendars.router)
 app.include_router(notifications.router)
+app.include_router(forum.router)
 
 
 @app.get("/health", tags=["Health"])

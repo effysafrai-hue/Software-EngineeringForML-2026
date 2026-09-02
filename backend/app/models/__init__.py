@@ -4,6 +4,7 @@ from app.models.chat import ChatMessage
 from app.models.course import Course, CourseReview
 from app.models.shared_calendar import SharedCalendar, SharedCalendarMember, SharedMemory
 from app.models.notification import Notification
+from app.models.forum import Post, Comment
 
 __all__ = [
     "User",
@@ -15,4 +16,6 @@ __all__ = [
     "SharedCalendarMember",
     "SharedMemory",
     "Notification",
+    "Post",
+    "Comment",
 ]

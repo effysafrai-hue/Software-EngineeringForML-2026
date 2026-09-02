@@ -77,3 +77,38 @@ export interface AppNotification {
   created_at: string;
   event_title?: string | null;
 }
+
+export interface Post {
+  id: number;
+  title: string;
+  body: string;
+  media_urls: string[];
+  anonymous: boolean;
+  created_at: string;
+  author_id?: number | null;
+  author_email?: string | null;
+  comment_count: number;
+}
+
+export interface Comment {
+  id: number;
+  post_id: number;
+  body: string;
+  media_urls: string[];
+  anonymous: boolean;
+  created_at: string;
+  author_id?: number | null;
+  author_email?: string | null;
+}
+
+export interface PostDetail extends Post {
+  comments: Comment[];
+}
+
+export interface FileUploadResponse {
+  url: string;
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  category: string;
+}
