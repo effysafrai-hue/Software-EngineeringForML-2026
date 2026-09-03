@@ -128,7 +128,7 @@ def test_password_is_hashed_and_never_returned(client, db_session):
 def test_refresh_returns_a_usable_new_access_token(client):
     tokens = _signup_and_login(client)
 
-    res = client.post("/auth/refresh", params={"refresh_token": tokens["refresh_token"]})
+    res = client.post("/auth/refresh", json={"refresh_token": tokens["refresh_token"]})
     assert res.status_code == 200
     refreshed = res.json()
     assert refreshed["access_token"]
@@ -147,13 +147,23 @@ def test_refresh_rejects_an_access_token(client):
     """
     tokens = _signup_and_login(client, email="swap_user@example.com")
 
-    res = client.post("/auth/refresh", params={"refresh_token": tokens["access_token"]})
+    res = client.post("/auth/refresh", json={"refresh_token": tokens["access_token"]})
     assert res.status_code == 401
 
 
 def test_refresh_rejects_a_garbage_token(client):
-    res = client.post("/auth/refresh", params={"refresh_token": "not.a.real.token"})
+    res = client.post("/auth/refresh", json={"refresh_token": "not.a.real.token"})
     assert res.status_code == 401
+
+
+def test_the_refresh_token_is_not_accepted_in_the_query_string(client):
+    """A refresh token lives for days, so it must not end up in a URL — access
+    logs, proxy logs, browser history and Referer headers all keep those."""
+    tokens = _signup_and_login(client, email="query_user@example.com")
+
+    res = client.post("/auth/refresh", params={"refresh_token": tokens["refresh_token"]})
+
+    assert res.status_code == 422
 
 
 def test_a_tampered_access_token_is_rejected(client):

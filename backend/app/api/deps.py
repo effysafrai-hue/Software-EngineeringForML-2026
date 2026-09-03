@@ -21,6 +21,15 @@ def get_current_user(
     if payload is None:
         raise credentials_exception
 
+    # A refresh token is valid, signed and long-lived (days, against the access
+    # token's minutes), and it is only ever meant to be traded in at
+    # /auth/refresh. Without this check it also works as a bearer credential on
+    # every protected endpoint, so a leaked one would grant full API access for
+    # its whole lifetime instead of being exchangeable at a single route.
+    # /auth/refresh enforces the mirror of this rule.
+    if payload.get("type") != "access":
+        raise credentials_exception
+
     user_id = payload.get("sub")
     if user_id is None:
         raise credentials_exception

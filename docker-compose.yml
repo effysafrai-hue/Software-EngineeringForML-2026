@@ -66,18 +66,46 @@ services:
       dockerfile: Dockerfile
     container_name: se_ml_effy_backend
     restart: unless-stopped
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    # `docker compose up` has to produce a working system, so the schema is
+    # applied before the API starts. Both steps are idempotent, so a restart is
+    # a no-op. Course seeding is deliberately non-fatal: an empty course table
+    # weakens the grounded answers but is no reason to refuse to serve the app.
+    # Forum demo content stays opt-in (`python -m app.db.seed_forum`) because it
+    # creates accounts that share one well-known password.
+    command: >
+      sh -c "alembic upgrade head &&
+             (python -m app.db.seed_courses || echo '[warn] course seeding skipped') &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+    # Only what is listed here reaches the container. Anything in .env that is
+    # missing from this block is silently ignored, so every setting the backend
+    # reads is passed through explicitly, with the same default as config.py.
     environment:
       - DATABASE_URL=${DATABASE_URL:-postgresql+psycopg://postgres:postgres@postgres:5432/se_ml_effy}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:-se_ml_effy_super_secret_jwt_key_change_in_production_32bytes}
+      - JWT_ALGORITHM=${JWT_ALGORITHM:-HS256}
+      - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+      - REFRESH_TOKEN_EXPIRE_DAYS=${REFRESH_TOKEN_EXPIRE_DAYS:-7}
       - LLM_PROVIDER=${LLM_PROVIDER:-gemini}
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://ollama:11434}
       - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.1:8b}
       - OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX:-8192}
+      - OLLAMA_NUM_PREDICT=${OLLAMA_NUM_PREDICT:-800}
       - OLLAMA_TIMEOUT=${OLLAMA_TIMEOUT:-300}
+      - OLLAMA_TEMPERATURE=${OLLAMA_TEMPERATURE:-0.0}
+      - OLLAMA_MAX_TOOL_TURNS=${OLLAMA_MAX_TOOL_TURNS:-4}
+      - OLLAMA_KEEP_ALIVE=${OLLAMA_KEEP_ALIVE:-24h}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-3.6-flash}
-      - CORS_ORIGINS=["http://localhost:5173", "http://127.0.0.1:5173"]
+      - PROJECT_NAME=${PROJECT_NAME:-SE_ML_effy}
+      - CORS_ORIGINS=${CORS_ORIGINS:-["http://localhost:5173", "http://127.0.0.1:5173"]}
+      - RATE_LIMIT_LOGIN=${RATE_LIMIT_LOGIN:-5/minute}
+      - RATE_LIMIT_SIGNUP=${RATE_LIMIT_SIGNUP:-5/minute}
+      - RATE_LIMIT_POST=${RATE_LIMIT_POST:-5/minute}
+      - RATE_LIMIT_COMMENT=${RATE_LIMIT_COMMENT:-15/minute}
+      - RATE_LIMIT_MESSAGE=${RATE_LIMIT_MESSAGE:-20/minute}
+      - RATE_LIMIT_REACTION=${RATE_LIMIT_REACTION:-60/minute}
+      - RATE_LIMIT_UPLOAD=${RATE_LIMIT_UPLOAD:-10/minute}
+      - RATE_LIMIT_MEMORY=${RATE_LIMIT_MEMORY:-30/minute}
     ports:
       - "8000:8000"
     volumes:

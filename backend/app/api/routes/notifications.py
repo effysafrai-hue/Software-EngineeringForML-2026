@@ -77,18 +77,39 @@ def mark_all_notifications_read(
 
 
 @router.websocket("/ws/notifications")
-async def websocket_notifications(websocket: WebSocket, token: str = Query(...)):
+async def websocket_notifications(
+    websocket: WebSocket,
+    token: str = Query(...),
+    db: Session = Depends(get_db),
+):
     """
     Authenticated WebSocket endpoint for real-time notification push.
     Connect with: ws://host/ws/notifications?token=<JWT>
+
+    The token has to travel in the query string: a browser cannot set an
+    Authorization header on a WebSocket handshake. It is therefore checked to
+    exactly the same standard as a bearer token on a REST route — signature,
+    token type, and that the user still exists — because everything pushed over
+    this socket is addressed to that user.
     """
-    # Validate JWT from query param
     payload = decode_jwt_token(token)
-    if not payload or not payload.get("sub"):
+    if not payload or not payload.get("sub") or payload.get("type") != "access":
         await websocket.close(code=4001, reason="Invalid or missing token")
         return
 
-    user_id = int(payload["sub"])
+    try:
+        user_id = int(payload["sub"])
+    except (TypeError, ValueError):
+        await websocket.close(code=4001, reason="Invalid or missing token")
+        return
+
+    # A deleted account's token stays cryptographically valid until it expires.
+    # Without this the socket would still be registered under its id and receive
+    # anything later addressed to it.
+    if db.query(User).filter(User.id == user_id).first() is None:
+        await websocket.close(code=4001, reason="Invalid or missing token")
+        return
+
     await manager.connect(user_id, websocket)
 
     try:

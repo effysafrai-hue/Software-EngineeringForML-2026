@@ -2,6 +2,10 @@
 
 Full-stack application combining smart AI scheduling, shared group calendars, course-grounded conversational AI, real-time WebSocket notifications, and an anonymous student forum.
 
+> **Grading / status:** [PROGRESS.md](PROGRESS.md) walks every requirement in the
+> project guidelines and says what is fully implemented, what is partial and
+> why — with the file and the test behind each claim.
+
 ---
 
 ## 🌐 Quick Access Links
@@ -19,20 +23,127 @@ Full-stack application combining smart AI scheduling, shared group calendars, co
 
 ---
 
-## 🚀 Quick Start
+## 🚀 Running the whole system
 
-### 1. Start All Services with Docker Compose
+**Prerequisites:** Docker Desktop (or Docker Engine + Compose v2) and nothing
+else — Python, Node and Postgres all run inside the containers. Ports 5173, 8000
+and 5432 must be free. Roughly 2 GB of disk for the images; add ~6 GB and 5 GB of
+free RAM if you choose the local-LLM path.
+
+### 1. Configure the environment
+
+```bash
+cp .env.example .env
+```
+
+Then open `.env` and set the two variables that matter. Everything else has a
+working default, and `.env` is gitignored.
+
+| Variable | Required? | What happens without it |
+| :--- | :--- | :--- |
+| `GEMINI_API_KEY` | **Yes**, unless you switch to Ollama | Every chat request answers **HTTP 503**. The assistant has no keyword fallback on purpose: a broken model path must not look healthy. Get a key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
+| `JWT_SECRET_KEY` | **Yes** for anything but localhost | Falls back to the value published in this repository, so anyone could forge a token for any account. The server logs a warning at startup while that default is in use. Generate one with `openssl rand -hex 32` |
+| `LLM_PROVIDER` | No (`gemini`) | `gemini` or `ollama` — see [switching to the local LLM](#4-optional-switch-to-the-local-llm) |
+| `POSTGRES_USER` / `_PASSWORD` / `_DB`, `DATABASE_URL` | No | Defaults to `postgres:postgres@postgres:5432/se_ml_effy`, which is fine for a local container and must be changed for anything else |
+| `ACCESS_TOKEN_EXPIRE_MINUTES`, `REFRESH_TOKEN_EXPIRE_DAYS` | No | 30 minutes / 7 days |
+| `RATE_LIMIT_*` (8 vars) | No | The per-user anti-spam budgets listed in `.env.example` |
+| `CORS_ORIGINS` | No | `["http://localhost:5173", "http://127.0.0.1:5173"]`. Change it if you serve the frontend from another origin, or every request fails CORS |
+| `VITE_API_URL` | No | `http://localhost:8000` — where the **browser** reaches the API |
+
+> Only variables listed in the `environment:` blocks of `docker-compose.yml` reach
+> a container. Every setting the backend reads is passed through there explicitly,
+> so a variable you add to `.env` that is not in that list is silently ignored.
+
+### 2. Bring it up
+
 ```bash
 docker compose up -d --build
 ```
 
-### 2. View Service Logs
+That is the whole startup. The backend container applies the database schema and
+seeds the course knowledge base before serving traffic, so there is no manual
+migration step:
+
+1. `alembic upgrade head` — creates/updates every table (idempotent).
+2. `python -m app.db.seed_courses` — fills the course/review tables that ground
+   the AI's course answers (idempotent, and non-fatal: a failure here logs
+   `[warn] course seeding skipped` and the API still starts).
+3. `uvicorn app.main:app` — the API, with the notification scheduler and the
+   chat priority queue started by the app's lifespan hook.
+
+First build takes a few minutes (pip install + npm install). Watch it with:
+
 ```bash
 docker compose logs -f backend
 docker compose logs -f frontend
 ```
 
-### 3. Run Automated Tests
+### 3. Check it works
+
+```bash
+curl http://localhost:8000/health          # {"status":"ok"}
+docker compose ps                          # postgres healthy, backend + frontend up
+```
+
+Then open **<http://localhost:5173>**, sign up (the second sign-up step asks the
+long-term-memory questions), and try *"remind me to water the plant on Thursday
+at 5pm"* in the chat panel. `http://localhost:8000/docs` is the full API.
+
+If chat answers 503, the model is the problem, not the app —
+`docker compose logs backend | grep -E "GEMINI|OLLAMA"` says which.
+
+### 4. Optional: switch to the local LLM
+
+No external API calls, ~5 GB of RAM in the Docker VM:
+
+```bash
+# in .env
+LLM_PROVIDER=ollama
+
+docker compose --profile ollama up -d      # starts ollama + the model pull
+docker compose logs -f ollama-pull         # chat returns 503 until this finishes
+```
+
+The `ollama` profile is off by default so an idle 8B runner does not hold several
+GB for nothing. Switching back is `LLM_PROVIDER=gemini` plus
+`docker compose up -d backend`. Tuning knobs and troubleshooting are in
+[LLM Configuration](#-llm-configuration) below.
+
+### 5. Optional: seed the forum with demo content
+
+An empty forum gives a first visitor nothing to react to:
+
+```bash
+docker compose exec backend python -m app.db.seed_forum
+```
+
+Idempotent. It creates four demo accounts that **share one well-known password**,
+so it stays a deliberate command rather than part of startup — never run it on an
+internet-facing deployment.
+
+### Stopping, resetting, migrations
+
+```bash
+docker compose down                        # stop, keep the database
+docker compose down -v                     # stop and delete the database volume
+docker compose restart backend             # after changing .env
+
+docker compose exec backend alembic upgrade head   # normally automatic on boot
+docker compose exec backend alembic downgrade -1   # roll back one migration
+```
+
+### Troubleshooting
+
+| Symptom | Cause and fix |
+| :--- | :--- |
+| Chat returns `503 ... currently unavailable` | No `GEMINI_API_KEY`, or `LLM_PROVIDER=ollama` and the model has not finished downloading |
+| `port is already allocated` | Something else holds 5173/8000/5432. Stop it, or change the left-hand side of the `ports:` mapping |
+| Backend restarts in a loop | Migrations failed — `docker compose logs backend`. A stale volume from an older schema is fixed with `docker compose down -v` |
+| Requests fail with a CORS error | `CORS_ORIGINS` does not include the origin the browser loaded the app from |
+| `llama-server process has terminated: signal: killed` | The Docker VM does not have ~5 GB free for the local model. Check with `docker compose exec ollama free -h`, or switch back to Gemini |
+| Login works, then everything is 401 | The access token expired (30 min by default). Log in again, or raise `ACCESS_TOKEN_EXPIRE_MINUTES` |
+
+### Running the tests
 
 ```bash
 # Everything (default)
@@ -64,14 +175,7 @@ requests-per-minute quota and return 429s (run it a file at a time if so), and
 `tests/test_courses.py` is marked live at module level because its seeding
 fixture calls the embeddings endpoint, not only because of the assertions.
 
-### 4. Database Migrations
-```bash
-# Run migrations
-docker compose exec backend alembic upgrade head
-
-# Rollback one migration
-docker compose exec backend alembic downgrade -1
-```
+The offline half is **209 tests** and needs no key, no network and no model.
 
 ---
 
@@ -274,6 +378,33 @@ disconnect and still appear in `GET /notifications`.
   plain text, so the policy is "no tags at all" rather than a tag allow-list, which
   an attribute payload like `<img onerror=…>` can slip past. Known limitation: the
   content-type check trusts the client's header rather than sniffing magic bytes.
+
+---
+
+## 🔐 Auth model & known gaps
+
+Every route except `/auth/signup`, `/auth/login`, `/auth/refresh`, `/health`,
+`/memory/questions` and `/memory/categories` requires a bearer token, and every
+row is looked up scoped to the caller — another user's id answers 404 (or 403 on
+a shared calendar) rather than confirming the row exists.
+`tests/test_access_control.py` enumerates the routes from the live app and
+asserts that, so a newly added router cannot quietly ship open.
+
+**Token rules.** Access tokens (30 min) are the only credential accepted as a
+bearer token or on the notification WebSocket; refresh tokens (7 days) are only
+accepted in the body of `/auth/refresh`. Neither type is usable in the other's
+place. The WebSocket credential has to travel in the query string — a browser
+cannot set a header on a handshake — so it is checked to the same standard:
+signature, token type, and that the account still exists.
+
+**Known gaps, deliberately not fixed here:**
+
+| Gap | Impact | Suggested fix |
+| :--- | :--- | :--- |
+| `/uploads/*` is served by `StaticFiles` with **no authentication** | Anyone with the URL can fetch any uploaded image or video, including media attached to a direct message that the API otherwise restricts to two people. Filenames are `uuid4` hex, so they are unguessable rather than protected | Serve media through an authenticated route that checks the caller may see the parent post/comment/DM, and hand the browser short-lived signed URLs |
+| `POST /events` and `POST /posts/{id}/share-as-event` have no rate limit | A token holder can create unbounded calendar rows. Every *forum* write is limited, so this is the one uncapped write path | Add a `RATE_LIMIT_EVENT` budget and apply it to both |
+| Any member of a shared calendar can add further members | There is no owner-only operation; the `role` column is stored but not enforced | Restrict `POST /shared-calendars/{id}/members` to `role == "owner"` if that is the intent |
+| The dev `JWT_SECRET_KEY` is a working fallback | An operator who never sets it runs with a secret published in this repository | Already warned at startup; make it fatal in a non-local deployment |
 
 ---
 

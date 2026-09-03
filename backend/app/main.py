@@ -17,10 +17,22 @@ from app.services.ws_manager import manager as ws_manager
 
 logger = logging.getLogger("main")
 
+# The value shipped in .env.example and used as the fallback in config.py and
+# docker-compose.yml. It is published in the repository, so anyone can mint a
+# token for any user id with it. Fine on a laptop, fatal anywhere reachable.
+_PUBLISHED_DEV_JWT_SECRET = "se_ml_effy_super_secret_jwt_key_change_in_production_32bytes"
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup / shutdown lifecycle: launch scheduler and chat worker pool."""
+    if settings.JWT_SECRET_KEY == _PUBLISHED_DEV_JWT_SECRET:
+        logger.warning(
+            "JWT_SECRET_KEY is still the development default from .env.example. "
+            "Anyone with this repository can forge a token for any account. "
+            "Set JWT_SECRET_KEY in .env before exposing this server to anything "
+            "but localhost (`openssl rand -hex 32`)."
+        )
     logger.info("Starting notification scheduler and chat queue...")
     # Sync routes and the scheduler thread both push over WebSockets, and a
     # socket may only be written from the loop that accepted it. Hand them one.

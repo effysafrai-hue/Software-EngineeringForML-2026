@@ -31,6 +31,17 @@ class UserLoginRequest(BaseModel):
     password: str
 
 
+class RefreshRequest(BaseModel):
+    """The refresh token travels in the body, never the query string.
+
+    A URL is written to access logs, proxy logs, browser history and Referer
+    headers; a refresh token lives for days, so putting it there would leave a
+    long-lived credential in places nobody thinks to clear.
+    """
+
+    refresh_token: str
+
+
 class TokenResponse(BaseModel):
     access_token: str
     refresh_token: str

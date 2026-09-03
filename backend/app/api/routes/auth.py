@@ -5,7 +5,13 @@ from app.core.config import settings
 from app.core.security import get_password_hash, verify_password, create_access_token, create_refresh_token, decode_jwt_token
 from app.db.session import get_db
 from app.models.user import User
-from app.schemas.auth import UserSignupRequest, UserLoginRequest, TokenResponse, UserResponse
+from app.schemas.auth import (
+    RefreshRequest,
+    TokenResponse,
+    UserLoginRequest,
+    UserResponse,
+    UserSignupRequest,
+)
 from app.api.deps import get_current_user
 from app.services.user_memory import seed_from_signup_answers
 
@@ -65,8 +71,11 @@ def get_me(current_user: User = Depends(get_current_user)):
 
 
 @router.post("/refresh", response_model=TokenResponse)
-def refresh_token(refresh_token: str, db: Session = Depends(get_db)):
-    payload = decode_jwt_token(refresh_token)
+def refresh_token(payload_in: RefreshRequest, db: Session = Depends(get_db)):
+    payload = decode_jwt_token(payload_in.refresh_token)
+    # Only a refresh token may be traded here: accepting an access token would
+    # let a leaked short-lived credential be swapped for an indefinite one.
+    # get_current_user enforces the mirror rule for bearer tokens.
     if not payload or payload.get("type") != "refresh":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
