@@ -33,30 +33,36 @@ docker compose logs -f frontend
 ```
 
 ### 3. Run Automated Tests
+
 ```bash
-# The default suite: deterministic, no network, no LLM quota. This is the one
-# to run while working — a failure here is a real defect.
+# Everything (default)
 docker compose exec backend pytest -v
 
 # A single suite (tests live at /app/tests inside the container)
 docker compose exec backend pytest -v tests/test_forum.py
 ```
 
-Tests that call the real model are marked `live_llm` and are **excluded from the
-default run**. They are slow, need a valid `GEMINI_API_KEY`, consume provider
-quota, and can fail because a model had an off day rather than because the code
-broke. Run them deliberately:
+Tests that call a real model are marked `live_llm`. Either half can be run on
+its own:
+
+| Command | Runs | Notes |
+| :--- | :--- | :--- |
+| `pytest` | Everything | Needs `GEMINI_API_KEY` |
+| `pytest --no-ai` | Only tests that never touch a model | Fast, offline, no quota. A failure is a real defect |
+| `pytest --ai-only` | Only the live-model tests | Slow; a failure may just mean the model had an off day |
 
 ```bash
-# Only the live-model tests (AI scheduling + course grounding)
-docker compose exec backend pytest -v -m live_llm
-
-# Absolutely everything
-docker compose exec backend pytest -v -m ""
+docker compose exec backend pytest -v --no-ai
+docker compose exec backend pytest -v --ai-only
 ```
 
-On a free-tier key the live suite can exceed the requests-per-minute quota and
-return 429s; run it a file at a time if that happens.
+The flags are defined in `tests/conftest.py` and are equivalent to
+`-m "not live_llm"` and `-m live_llm`.
+
+Two things to know about the live half: on a free-tier key it can exceed the
+requests-per-minute quota and return 429s (run it a file at a time if so), and
+`tests/test_courses.py` is marked live at module level because its seeding
+fixture calls the embeddings endpoint, not only because of the assertions.
 
 ### 4. Database Migrations
 ```bash
@@ -121,12 +127,13 @@ docker compose exec ollama ollama list
 docker compose logs -f backend | grep -E "GEMINI|OLLAMA|AI_AGENT"
 ```
 
-`tests/test_chat.py` and `tests/test_courses.py` call the live model rather than a
-mock, so they are slow and depend on the model's instruction following. Both are
-marked `live_llm` and skipped by the default `pytest` run — use `-m live_llm` to
-run them. The route around the model (persistence, history, the 503 path) is
-covered deterministically in `tests/test_chat_api.py` with the model stubbed, so
-the default suite still exercises the chat endpoint.
+`tests/test_chat.py`, `tests/test_courses.py` and one shared-calendar chat test
+call the live model rather than a mock, so they are slow and depend on the
+model's instruction following. All are marked `live_llm`; `pytest --no-ai`
+excludes them. The code *around* the model — persistence, history, memory
+extraction, the 503 path — is covered deterministically with the model stubbed
+in `tests/test_chat_api.py` and `tests/test_shared_calendars.py`, so `--no-ai`
+still exercises both chat endpoints end to end.
 
 On Ollama, if a scheduling test fails on `llama3.1:8b`, a larger quantisation
 (`llama3.1:8b-instruct-q8_0`) or `qwen2.5:7b-instruct` follows tool schemas more

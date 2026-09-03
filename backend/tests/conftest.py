@@ -29,6 +29,45 @@ engine = create_engine(
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
+def pytest_addoption(parser):
+    """Named subsets of the suite, on top of the default "run everything"."""
+    group = parser.getgroup("ai", "AI / LLM test selection")
+    group.addoption(
+        "--ai-only",
+        action="store_true",
+        default=False,
+        help="Run only tests that call a real LLM (marked live_llm).",
+    )
+    group.addoption(
+        "--no-ai",
+        action="store_true",
+        default=False,
+        help="Skip tests that call a real LLM: deterministic, offline, no provider quota.",
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    ai_only = config.getoption("--ai-only")
+    no_ai = config.getoption("--no-ai")
+
+    if ai_only and no_ai:
+        raise pytest.UsageError("--ai-only and --no-ai cannot be used together.")
+    if not (ai_only or no_ai):
+        return  # default: run everything
+
+    # Deselect rather than skip, so the summary reports a count instead of
+    # padding the output with one skip line per excluded test.
+    selected, deselected = [], []
+    for item in items:
+        is_ai = item.get_closest_marker("live_llm") is not None
+        keep = is_ai if ai_only else not is_ai
+        (selected if keep else deselected).append(item)
+
+    if deselected:
+        config.hook.pytest_deselected(items=deselected)
+        items[:] = selected
+
+
 @pytest.fixture(autouse=True)
 def reset_rate_limits():
     """Reset SlowAPI rate limit storage before and after each test.
