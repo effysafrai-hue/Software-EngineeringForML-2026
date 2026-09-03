@@ -3,10 +3,16 @@ import re
 from typing import Optional, Dict, Any
 from pydantic import BaseModel, EmailStr, field_validator
 
+from app.schemas.memory import SignupPreferences
+
 
 class UserSignupRequest(BaseModel):
     email: EmailStr
     password: str
+    # Optional answers to the sign-up questions (requirement 2.2). They are
+    # seeded into long-term memory so the assistant is personal from the first
+    # message; leaving them out is a normal sign-up.
+    preferences: Optional[SignupPreferences] = None
 
     @field_validator("password")
     @classmethod

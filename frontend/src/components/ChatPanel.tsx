@@ -1,19 +1,28 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
-import { ChatMessage, SharedMemory } from '../types';
+import { ChatMessage, MemoryAction, SharedMemory } from '../types';
 import { Send, Bot, User as UserIcon, Sparkles, RefreshCw, Users, Brain } from 'lucide-react';
 import { format } from 'date-fns';
 
 interface ChatPanelProps {
   onEventChange: () => void;
   sharedCalendarId?: number | null;
+  /** Called when the assistant stored or dropped something it remembers. */
+  onMemoryChange?: (actions: MemoryAction[]) => void;
 }
 
-export const ChatPanel: React.FC<ChatPanelProps> = ({ onEventChange, sharedCalendarId = null }) => {
+export const ChatPanel: React.FC<ChatPanelProps> = ({
+  onEventChange,
+  sharedCalendarId = null,
+  onMemoryChange,
+}) => {
   const { accessToken } = useAuth();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [memories, setMemories] = useState<SharedMemory[]>([]);
+  // The most recent memory decision, shown under the reply so a change to what
+  // the assistant knows about you is visible when it happens.
+  const [lastMemoryActions, setLastMemoryActions] = useState<MemoryAction[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
@@ -31,6 +40,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ onEventChange, sharedCalen
   useEffect(() => {
     if (!accessToken) return;
     setInitialLoading(true);
+    setLastMemoryActions([]);
 
     if (sharedCalendarId) {
       // Scoped Shared Chat
@@ -70,6 +80,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ onEventChange, sharedCalen
       created_at: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, tempUserMsg]);
+    setLastMemoryActions([]);
     setLoading(true);
 
     try {
@@ -92,6 +103,12 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ onEventChange, sharedCalen
 
       if (response.action_taken) {
         onEventChange();
+      }
+
+      const memoryActions = response.memory_actions || [];
+      setLastMemoryActions(memoryActions);
+      if (memoryActions.length > 0) {
+        onMemoryChange?.(memoryActions);
       }
     } catch (err: any) {
       const errorMsg: ChatMessage = {
@@ -181,6 +198,23 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ onEventChange, sharedCalen
             </div>
           </div>
         ))}
+
+        {lastMemoryActions.length > 0 && (
+          <div className="flex items-start gap-2 pl-8">
+            <div className="rounded-xl px-3 py-1.5 bg-indigo-950/40 border border-indigo-900/50 text-[11px] text-indigo-300 space-y-0.5">
+              {lastMemoryActions.map((a) => (
+                <div key={`${a.action}-${a.id}`} className="flex items-center gap-1.5">
+                  <Brain className="w-3 h-3 shrink-0" />
+                  <span>
+                    {a.action === 'remembered' ? 'Remembered: ' : 'Forgot: '}
+                    {a.content}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div ref={messagesEndRef} />
       </div>
 

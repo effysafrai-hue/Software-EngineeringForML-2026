@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     RATE_LIMIT_MESSAGE: str = "20/minute"
     RATE_LIMIT_REACTION: str = "60/minute"
     RATE_LIMIT_UPLOAD: str = "10/minute"
+    # Memory writes go into a system prompt, so the budget is generous enough for
+    # editing a profile by hand but not for scripting thousands of rows into it.
+    RATE_LIMIT_MEMORY: str = "30/minute"
 
     # LLM Provider Configuration.
     # Gemini is the default: the agent needs an 8B-class tool-calling model, and

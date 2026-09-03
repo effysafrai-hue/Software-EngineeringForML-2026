@@ -10,6 +10,11 @@ from sqlalchemy import or_
 from app.core.config import settings
 from app.models import User, Event, ChatMessage, Course, CourseReview
 from app.services.course_grounding import retrieve_relevant_courses
+from app.services.user_memory import (
+    MEMORY_INSTRUCTIONS,
+    build_memory_context,
+    build_memory_tools,
+)
 
 logger = logging.getLogger("ai_agent")
 logger.setLevel(logging.DEBUG)
@@ -409,6 +414,12 @@ def process_chat(
     grounding_info = retrieve_relevant_courses(message, db)
     grounding_context_str = grounding_info.get("grounding_text", "")
 
+    # Requirement 2.5 — the stored memory is rebuilt into the prompt on every
+    # turn. Nothing is carried in process state, so a preference given last week
+    # reaches this reply exactly the same way one given a minute ago does.
+    memory_context_str = build_memory_context(db, user_id, now=ref_time)
+    memory_toolkit = build_memory_tools(user_id, db, now=ref_time)
+
     gemini_key_present = bool(settings.GEMINI_API_KEY and settings.GEMINI_API_KEY.strip())
     if provider == "gemini" and (not gemini_key_present or genai is None):
         missing = "GEMINI_API_KEY is not set" if not gemini_key_present else "the google-generativeai package is not installed"
@@ -443,6 +454,11 @@ A weekday name always means its NEXT occurrence, given by this table - never tod
 - With no duration given, make the event 1 hour. With a duration given, use it exactly: "3pm for 45 minutes" -> 15:00:00 to 15:45:00.
 - start_time and end_time are always full ISO 8601 with Z, e.g. "{upcoming_days[0].strftime('%Y-%m-%d')}T09:00:00Z".
 
+# LONG-TERM MEMORY
+{memory_context_str}
+
+{MEMORY_INSTRUCTIONS}
+
 # COURSE KNOWLEDGE BASE
 {grounding_context_str}
 
@@ -464,7 +480,8 @@ A weekday name always means its NEXT occurrence, given by this table - never tod
 3. If the user corrects themselves mid-sentence ("...on Friday - wait no, make it Saturday at 4pm instead"), act on the FINAL version ONLY, with exactly one create_event. Never schedule the part they retracted.
 4. If the user refers to an event only as "it", "that" or "this" and names no event in this message, call NO tools at all - not even list_events. Reply with a question asking which event they mean.
 5. After calling a tool, reply in plain language and name what you found or changed, with its title and time.
-6. Small talk and informational questions get no tool calls.
+6. Small talk and informational questions get no calendar tool calls - but something the user reveals about themselves in small talk is still worth remembering.
+7. A remembered preference shapes HOW you schedule, never WHETHER you schedule. It is not a reason to skip a calendar action the user asked for, and calling remember_about_user is not a substitute for taking that action.
 """
 
     executed_actions: List[str] = []
@@ -509,7 +526,7 @@ A weekday name always means its NEXT occurrence, given by this table - never tod
             list_events_tool(user_id, db, start_time or None, end_time or None, search_query or None),
         )
 
-    tools = [create_event, update_event, delete_event, list_events]
+    tools = [create_event, update_event, delete_event, list_events, *memory_toolkit.tools]
 
     def _safe_int(val: Any, default: int = 0) -> int:
         try:
@@ -539,6 +556,7 @@ A weekday name always means its NEXT occurrence, given by this table - never tod
             end_time=str(kw.get("end_time") or kw.get("end") or ""),
             search_query=str(kw.get("search_query") or kw.get("query") or kw.get("q") or ""),
         ),
+        **memory_toolkit.executors,
     }
 
     try:
@@ -548,7 +566,7 @@ A weekday name always means its NEXT occurrence, given by this table - never tod
             system_instruction=system_instruction,
             user_message=message,
             tools=tools,
-            tool_schemas=TOOL_SCHEMAS,
+            tool_schemas=[*TOOL_SCHEMAS, *memory_toolkit.schemas],
             tool_executors=tool_executors,
         )
 
@@ -574,9 +592,17 @@ A weekday name always means its NEXT occurrence, given by this table - never tod
         else:
             action_taken = None
 
+        if memory_toolkit.actions:
+            logger.info(f"Memory changes for user {user_id}: {memory_toolkit.actions}")
+
         return {
             "reply": reply_text,
             "action_taken": action_taken,
+            # What the model chose to keep or drop this turn. Reported separately
+            # from action_taken, which callers read as "what happened to the
+            # calendar" — the shared-calendar route keys off it to attach an
+            # event, and a memory write must not look like one.
+            "memory_actions": list(memory_toolkit.actions),
         }
     except LLMUnavailableError:
         raise

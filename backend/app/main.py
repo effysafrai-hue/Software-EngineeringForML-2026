@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
-from app.api.routes import auth, events, chat, shared_calendars, notifications, forum, messages
+from app.api.routes import auth, events, chat, shared_calendars, notifications, forum, messages, memory
 from app.core.config import settings
 from app.core.limiter import limiter
 from app.services.chat_queue import chat_queue
@@ -62,6 +62,7 @@ app.include_router(shared_calendars.router)
 app.include_router(notifications.router)
 app.include_router(forum.router)
 app.include_router(messages.router)
+app.include_router(memory.router)
 
 
 @app.get("/health", tags=["Health"])

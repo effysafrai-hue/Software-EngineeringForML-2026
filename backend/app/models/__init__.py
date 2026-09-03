@@ -6,6 +6,15 @@ from app.models.shared_calendar import SharedCalendar, SharedCalendarMember, Sha
 from app.models.notification import Notification
 from app.models.forum import Post, Comment, Reaction, REACTION_LIKE, REACTION_DISLIKE, REACTION_VALUES
 from app.models.message import Message
+from app.models.memory import (
+    UserMemory,
+    MEMORY_CATEGORIES,
+    MEMORY_SOURCES,
+    CATEGORY_ORDER,
+    DEFAULT_CATEGORY,
+    DEFAULT_SOURCE,
+    SINGLE_VALUE_CATEGORIES,
+)
 
 __all__ = [
     "User",
@@ -24,4 +33,11 @@ __all__ = [
     "REACTION_DISLIKE",
     "REACTION_VALUES",
     "Message",
+    "UserMemory",
+    "MEMORY_CATEGORIES",
+    "MEMORY_SOURCES",
+    "CATEGORY_ORDER",
+    "DEFAULT_CATEGORY",
+    "DEFAULT_SOURCE",
+    "SINGLE_VALUE_CATEGORIES",
 ]

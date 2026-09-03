@@ -7,6 +7,7 @@ from app.db.session import get_db
 from app.models.user import User
 from app.schemas.auth import UserSignupRequest, UserLoginRequest, TokenResponse, UserResponse
 from app.api.deps import get_current_user
+from app.services.user_memory import seed_from_signup_answers
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -20,14 +21,22 @@ def signup(request: Request, user_in: UserSignupRequest, db: Session = Depends(g
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Email already registered",
         )
+    answers = user_in.preferences.to_dict() if user_in.preferences else {}
     user = User(
         email=user_in.email,
         hashed_password=get_password_hash(user_in.password),
-        preferences={},
+        preferences=answers,
     )
     db.add(user)
     db.commit()
     db.refresh(user)
+
+    # Requirement 2.2 — the sign-up answers become long-term memory immediately,
+    # so the assistant has something to personalise with on the very first turn
+    # rather than only after it has learned it from conversation.
+    if answers:
+        seed_from_signup_answers(db, user.id, answers)
+
     return user
 
 

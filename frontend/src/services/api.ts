@@ -12,6 +12,10 @@ import {
   Comment,
   PostDetail,
   FileUploadResponse,
+  UserMemory,
+  MemoryContext,
+  SignupQuestion,
+  SignupPreferences,
 } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -61,7 +65,7 @@ async function request<T>(
 
 export const api = {
   // Auth
-  signup: (payload: { email: string; password: string }) =>
+  signup: (payload: { email: string; password: string; preferences?: SignupPreferences }) =>
     request<User>('/auth/signup', {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -214,6 +218,64 @@ export const api = {
       {
         method: 'POST',
         body: JSON.stringify({ content }),
+      },
+      token
+    ),
+
+  // Long-Term Memory (per user)
+  // The questionnaire is fetched rather than hard-coded so the form and the
+  // sentences the AI reads cannot drift apart; it needs no token, since the
+  // sign-up page renders it before an account exists.
+  getSignupQuestions: () => request<SignupQuestion[]>('/memory/questions'),
+
+  listMemories: (token: string, includeInactive = false) =>
+    request<UserMemory[]>(`/memory${includeInactive ? '?include_inactive=true' : ''}`, {}, token),
+
+  getMemoryContext: (token: string) => request<MemoryContext>('/memory/context', {}, token),
+
+  createMemory: (
+    token: string,
+    payload: { content: string; category?: string; expires_in_days?: number }
+  ) =>
+    request<UserMemory>(
+      '/memory',
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      },
+      token
+    ),
+
+  updateMemory: (
+    token: string,
+    memoryId: number,
+    payload: { content?: string; category?: string; active?: boolean }
+  ) =>
+    request<UserMemory>(
+      `/memory/${memoryId}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(payload),
+      },
+      token
+    ),
+
+  deleteMemory: (token: string, memoryId: number) =>
+    request<void>(`/memory/${memoryId}`, { method: 'DELETE' }, token),
+
+  getMemoryPreferences: (token: string) =>
+    request<{ preferences: SignupPreferences; seeded_memories: UserMemory[] }>(
+      '/memory/preferences',
+      {},
+      token
+    ),
+
+  updateMemoryPreferences: (token: string, preferences: SignupPreferences) =>
+    request<{ preferences: SignupPreferences; seeded_memories: UserMemory[] }>(
+      '/memory/preferences',
+      {
+        method: 'PUT',
+        body: JSON.stringify(preferences),
       },
       token
     ),

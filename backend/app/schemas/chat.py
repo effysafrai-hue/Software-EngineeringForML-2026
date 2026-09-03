@@ -1,6 +1,6 @@
 from datetime import datetime
-from typing import Optional
-from pydantic import BaseModel
+from typing import Any, Dict, List, Optional
+from pydantic import BaseModel, Field
 
 
 class ChatRequest(BaseModel):
@@ -20,3 +20,7 @@ class ChatMessageResponse(BaseModel):
 class ChatResponse(BaseModel):
     reply: str
     action_taken: Optional[str] = None
+    # What the assistant decided to keep or drop from long-term memory on this
+    # turn. Surfaced so the user can see the decision instead of discovering it
+    # in a later reply.
+    memory_actions: List[Dict[str, Any]] = Field(default_factory=list)

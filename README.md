@@ -127,17 +127,87 @@ docker compose exec ollama ollama list
 docker compose logs -f backend | grep -E "GEMINI|OLLAMA|AI_AGENT"
 ```
 
-`tests/test_chat.py`, `tests/test_courses.py` and one shared-calendar chat test
-call the live model rather than a mock, so they are slow and depend on the
-model's instruction following. All are marked `live_llm`; `pytest --no-ai`
-excludes them. The code *around* the model — persistence, history, memory
-extraction, the 503 path — is covered deterministically with the model stubbed
-in `tests/test_chat_api.py` and `tests/test_shared_calendars.py`, so `--no-ai`
-still exercises both chat endpoints end to end.
+`tests/test_chat.py`, `tests/test_courses.py`, `tests/test_memory_ai.py` and one
+shared-calendar chat test call the live model rather than a mock, so they are slow
+and depend on the model's instruction following. All are marked `live_llm`;
+`pytest --no-ai` excludes them. The code *around* the model — persistence, history,
+memory storage and expiry, the 503 path — is covered deterministically with the
+model stubbed in `tests/test_chat_api.py`, `tests/test_user_memory.py` and
+`tests/test_shared_calendars.py`, so `--no-ai` still exercises both chat endpoints
+end to end.
 
 On Ollama, if a scheduling test fails on `llama3.1:8b`, a larger quantisation
 (`llama3.1:8b-instruct-q8_0`) or `qwen2.5:7b-instruct` follows tool schemas more
 reliably.
+
+---
+
+## 🧠 Long-Term Memory (per user)
+
+Every user has a persistent memory of their own: one row per remembered fact in
+`user_memories`, rebuilt into the system prompt on **every** chat turn. That is
+what makes a preference stated last week reach today's reply — nothing is held in
+process state, so a restart changes nothing.
+
+A fact is filed under a category (`wants`, `preference`, `communication_style`,
+`routine`, `task_order`, `constraint`, `other`) and carries where it came from:
+`signup`, `ai` (the assistant decided to keep it) or `user` (typed in by hand).
+
+### The assistant decides what to keep and what to drop
+
+Two tools are offered alongside the calendar tools on every turn, so no keyword
+rule is making the call:
+
+| Tool | Effect |
+| :--- | :--- |
+| `remember_about_user(content, category, expires_in_days)` | Stores one short third-person fact. `expires_in_days` gives a temporary state a horizon — "I'm ill this week" becomes a constraint that stops applying after 7 days |
+| `forget_about_user(memory_id)` | Retires a fact the user says is wrong or finished. An id the caller does not own is refused and the real ids are handed back, so a mistaken call cannot drop something else |
+
+What it actually stored or dropped comes back on the chat response as
+`memory_actions`, and is shown under the reply in the UI — a rejected write is
+never reported as a saved one.
+
+Three things keep the memory from degrading over time:
+
+- **Expiry.** A row past its horizon is retired the next time the memory is read.
+- **Single-answer categories.** Tone and task order hold one value; a new answer
+  retires the old one instead of leaving two contradictory lines in the prompt.
+- **A cap** of 60 live rows per user. Past it the oldest inferred fact is evicted;
+  sign-up answers are evicted last.
+
+Memory text is markup-stripped and length-capped before storage, and the prompt
+states that the block is data and can never issue instructions — it is
+user-authored text being replayed into a system prompt.
+
+### Sign-up questions
+
+`GET /memory/questions` serves the questionnaire (task order, tone, study times,
+interests, goals, routine); the sign-up form renders it from there rather than
+hard-coding it, because the server is what turns each answer into the sentence the
+AI reads. Answers ride along with `POST /auth/signup` as `preferences` and are
+seeded into memory immediately, so the first message is already personalised.
+Answering nothing is a normal sign-up.
+
+### Endpoints
+
+| Method & path | Purpose |
+| :--- | :--- |
+| `GET /memory/questions` | The sign-up questionnaire. No token — the form needs it before an account exists |
+| `GET /memory/categories` | Category → the heading it appears under in the prompt |
+| `GET /memory` | Everything remembered about the caller (`?include_inactive=true` for discarded rows) |
+| `GET /memory/context` | The verbatim block the assistant is given, plus per-category counts |
+| `POST /memory` | Add a fact by hand |
+| `PATCH /memory/{id}` | Correct a fact, recategorise it, or restore a discarded one |
+| `DELETE /memory/{id}` | Make the assistant forget it. The row is retired, not deleted, so the decision stays auditable and undoable |
+| `GET` / `PUT /memory/preferences` | Read or re-answer the sign-up questions later. Answers merge; the derived memories are re-seeded |
+
+Every query is scoped to the caller, so another account's memory id reads as 404
+rather than confirming the row exists. Writes are rate-limited
+(`RATE_LIMIT_MEMORY`, default `30/minute`).
+
+In the UI: the **Memory** button in the header opens the panel — grouped by
+category, showing where each fact came from and when it expires, with controls to
+add, forget and restore.
 
 ---
 
@@ -213,5 +283,6 @@ disconnect and still appear in `GET /notifications`.
 - **Backend**: FastAPI (Python 3.12), SQLAlchemy 2.0, Alembic, SlowAPI (rate limiting).
 - **Database**: PostgreSQL 16 with `pgvector` extension.
 - **AI & LLM**: Switchable dual provider (`LLM_PROVIDER=gemini|ollama`) with priority queue worker pool (`asyncio.PriorityQueue`).
+- **Long-Term Memory**: per-user `user_memories` table with categories, expiry and eviction, written by the model's own tools and rebuilt into every prompt.
 - **Real-Time**: WebSocket notification hub (`/ws/notifications`) with auto-reconnect, live reminder broadcasts, and live forum/DM frames.
 - **Community Forum**: Anonymous posting, media upload validation, post/comment threading, likes/dislikes, direct messages, and calendar event conversion.

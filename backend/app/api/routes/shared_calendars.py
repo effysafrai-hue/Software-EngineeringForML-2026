@@ -391,6 +391,7 @@ async def send_shared_chat_message(
     return ChatResponse(
         reply=ai_result["reply"],
         action_taken=ai_result.get("action_taken"),
+        memory_actions=ai_result.get("memory_actions") or [],
     )
 
 

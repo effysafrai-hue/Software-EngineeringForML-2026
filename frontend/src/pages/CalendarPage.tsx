@@ -6,6 +6,7 @@ import { EventModal } from '../components/EventModal';
 import { ChatPanel } from '../components/ChatPanel';
 import { CalendarSwitcher } from '../components/CalendarSwitcher';
 import { NotificationBell } from '../components/NotificationBell';
+import { MemoryPanel } from '../components/MemoryPanel';
 import { ForumPage } from './ForumPage';
 import {
   format,
@@ -22,7 +23,7 @@ import {
   subWeeks,
   isToday,
 } from 'date-fns';
-import { ChevronLeft, ChevronRight, Plus, LogOut, Calendar as CalendarIcon, MessageSquare, Sparkles } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, LogOut, Calendar as CalendarIcon, MessageSquare, Sparkles, Brain } from 'lucide-react';
 
 export const CalendarPage: React.FC = () => {
   const { accessToken, user, logout } = useAuth();
@@ -35,6 +36,10 @@ export const CalendarPage: React.FC = () => {
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [selectedCalendarId, setSelectedCalendarId] = useState<number | null>(null);
+  const [memoryOpen, setMemoryOpen] = useState(false);
+  // Bumped whenever the assistant changes its memory, so an open panel reloads
+  // instead of showing what it knew before the last message.
+  const [memoryVersion, setMemoryVersion] = useState(0);
 
   const rangeStart = view === 'month' ? startOfWeek(startOfMonth(currentDate)) : startOfWeek(currentDate);
   const rangeEnd = view === 'month' ? endOfWeek(endOfMonth(currentDate)) : endOfWeek(currentDate);
@@ -167,6 +172,15 @@ export const CalendarPage: React.FC = () => {
         </div>
 
         <div className="flex items-center space-x-3">
+          <button
+            onClick={() => setMemoryOpen(true)}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-indigo-950/40 hover:text-indigo-300 border border-slate-700 text-slate-400 text-xs font-semibold transition"
+            title="What the assistant remembers about you"
+          >
+            <Brain className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Memory</span>
+          </button>
+
           <NotificationBell />
 
           <div className="h-4 w-px bg-slate-800 hidden sm:block" />
@@ -341,12 +355,15 @@ export const CalendarPage: React.FC = () => {
             <div className="lg:col-span-1 min-h-0 h-full flex flex-col overflow-hidden">
               <ChatPanel
                 onEventChange={loadEvents}
+                onMemoryChange={() => setMemoryVersion((v) => v + 1)}
                 sharedCalendarId={selectedCalendarId}
               />
             </div>
           </div>
         </main>
       )}
+
+      <MemoryPanel key={memoryVersion} isOpen={memoryOpen} onClose={() => setMemoryOpen(false)} />
 
       {/* Modal Dialog */}
       <EventModal
