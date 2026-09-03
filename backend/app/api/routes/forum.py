@@ -185,6 +185,22 @@ def add_comment(
     db.add(comment)
     db.commit()
     db.refresh(comment)
+
+    masked = _jsonable(serialize_comment(comment, current_user_id=None))
+    realtime.broadcast(
+        {"type": realtime.EVENT_NEW_COMMENT, "post_id": post_id, "comment": masked},
+        exclude_user_id=current_user.id,
+    )
+    # The notification names the post, never the commenter: naming them would
+    # undo the anonymity of an anonymous comment.
+    realtime.notify_user(
+        db,
+        user_id=post.user_id,
+        actor_id=current_user.id,
+        message=f"New comment on your post '{post.title}'.",
+        payload={"type": realtime.EVENT_NEW_COMMENT, "post_id": post_id, "comment": masked},
+    )
+
     return serialize_comment(comment, current_user_id=current_user.id)
 
 
