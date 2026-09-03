@@ -7,6 +7,12 @@ from app.services.course_grounding import retrieve_relevant_courses
 
 MOCK_NOW = datetime(2026, 6, 10, 10, 0, 0, tzinfo=timezone.utc)
 
+# Marked at module level rather than per-test: the autouse fixture below calls
+# seed_courses_data, whose compute_embedding hits the Gemini embeddings endpoint
+# whenever a key is configured. That makes even the pure-retrieval test in this
+# file a network test. Excluded from the default run; see pytest.ini.
+pytestmark = pytest.mark.live_llm
+
 
 @pytest.fixture(autouse=True)
 def seed_courses_for_tests(db_session):

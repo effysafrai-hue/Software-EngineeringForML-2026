@@ -6,6 +6,10 @@ from app.services.ai_agent import process_chat
 
 MOCK_NOW = datetime(2026, 6, 10, 10, 0, 0, tzinfo=timezone.utc)
 
+# Every test here calls the real model, and the seeding fixture below also hits
+# the embeddings endpoint. Excluded from the default run; see pytest.ini.
+pytestmark = pytest.mark.live_llm
+
 
 @pytest.fixture(autouse=True)
 def seed_courses_for_chat_tests(db_session):

@@ -34,12 +34,29 @@ docker compose logs -f frontend
 
 ### 3. Run Automated Tests
 ```bash
-# Run a single suite (tests live at /app/tests inside the container)
-docker compose exec backend pytest -v tests/test_forum.py
-
-# Run all backend tests
+# The default suite: deterministic, no network, no LLM quota. This is the one
+# to run while working — a failure here is a real defect.
 docker compose exec backend pytest -v
+
+# A single suite (tests live at /app/tests inside the container)
+docker compose exec backend pytest -v tests/test_forum.py
 ```
+
+Tests that call the real model are marked `live_llm` and are **excluded from the
+default run**. They are slow, need a valid `GEMINI_API_KEY`, consume provider
+quota, and can fail because a model had an off day rather than because the code
+broke. Run them deliberately:
+
+```bash
+# Only the live-model tests (AI scheduling + course grounding)
+docker compose exec backend pytest -v -m live_llm
+
+# Absolutely everything
+docker compose exec backend pytest -v -m ""
+```
+
+On a free-tier key the live suite can exceed the requests-per-minute quota and
+return 429s; run it a file at a time if that happens.
 
 ### 4. Database Migrations
 ```bash
@@ -104,11 +121,16 @@ docker compose exec ollama ollama list
 docker compose logs -f backend | grep -E "GEMINI|OLLAMA|AI_AGENT"
 ```
 
-The chat tests (`tests/test_chat.py`, `tests/test_courses.py`) call the live model
-rather than a mock, so they are slow and depend on the model's instruction
-following. On Ollama, if a scheduling test fails on `llama3.1:8b`, a larger
-quantisation (`llama3.1:8b-instruct-q8_0`) or `qwen2.5:7b-instruct` follows tool
-schemas more reliably.
+`tests/test_chat.py` and `tests/test_courses.py` call the live model rather than a
+mock, so they are slow and depend on the model's instruction following. Both are
+marked `live_llm` and skipped by the default `pytest` run — use `-m live_llm` to
+run them. The route around the model (persistence, history, the 503 path) is
+covered deterministically in `tests/test_chat_api.py` with the model stubbed, so
+the default suite still exercises the chat endpoint.
+
+On Ollama, if a scheduling test fails on `llama3.1:8b`, a larger quantisation
+(`llama3.1:8b-instruct-q8_0`) or `qwen2.5:7b-instruct` follows tool schemas more
+reliably.
 
 ---
 
