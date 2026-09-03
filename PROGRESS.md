@@ -18,8 +18,8 @@ missing — a claim that turns out to be false costs more than an honest gap.
 `GEMINI_API_KEY` is the whole setup; the schema and the course database are
 applied on boot.
 
-**Test suite:** 209 offline tests (`pytest --no-ai`, no key or network needed) and
-25 live-model tests (`pytest --ai-only`, needs `GEMINI_API_KEY`). See
+**Test suite:** 237 offline tests (`pytest --no-ai`, no key or network needed) and
+26 live-model tests (`pytest --ai-only`, needs `GEMINI_API_KEY`). See
 [Test map](#test-map) at the bottom for which file proves what.
 
 ---
@@ -66,6 +66,7 @@ ship open by accident.
 | Free-speech requests | ✅ | e.g. *"Make sure I buy groceries on Thursday"* → `test_chat.py::test_intent_task_and_reminder_creation` |
 | AI decides what goes on the calendar | ✅ | Four tools (`create_event`, `update_event`, `delete_event`, `list_events`) in `app/services/ai_agent.py`; the model calls them, no keyword parsing |
 | AI works out an appropriate schedule | ✅ | The prompt resolves "Thursday", "next week", "3pm for 45 minutes" against a generated weekday table; defaults are stated (09:00, one hour). `test_chat.py::test_intent_scheduled_appointment` |
+| Times mean what the user meant | ✅ | The whole AI path works in the user's own wall clock — browser zone per request, local prompt, local tool results, UTC only in the database. `test_timezones.py`; see [README → Times and timezones](README.md#-times-and-timezones) |
 | Gemini API | ✅ | `GeminiClient` in `app/services/llm_client.py`, with automatic fallback when Google retires a model id |
 
 There is deliberately **no** keyword fallback: if the model is unreachable, chat
@@ -407,8 +408,8 @@ Anything marked API-only is easiest to exercise from
 ## Test map
 
 ```bash
-docker compose exec backend pytest --no-ai      # 209 tests, no key or network
-docker compose exec backend pytest --ai-only    # 25 tests, needs GEMINI_API_KEY
+docker compose exec backend pytest --no-ai      # 237 tests, no key or network
+docker compose exec backend pytest --ai-only    # 26 tests, needs GEMINI_API_KEY
 ```
 
 | File | Covers | Live model? |

@@ -7,6 +7,13 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+psycopg://postgres:postgres@postgres:5432/se_ml_effy"
     CORS_ORIGINS: List[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
 
+    # Wall-clock zone for users who have not told us theirs. The chat request
+    # carries the browser's zone, which is the reliable source; this is the
+    # fallback for anything server-initiated or from an older client. Set it to
+    # the campus zone (e.g. Asia/Jerusalem) rather than leaving it on UTC, or a
+    # user with no zone of their own gets times shifted by their real offset.
+    DEFAULT_TIMEZONE: str = "UTC"
+
     JWT_SECRET_KEY: str = "se_ml_effy_super_secret_jwt_key_change_in_production_32bytes"
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30

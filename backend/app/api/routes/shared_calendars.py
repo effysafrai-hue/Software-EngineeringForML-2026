@@ -23,6 +23,7 @@ from app.schemas.shared_calendar import (
 )
 from app.services.ai_agent import LLMUnavailableError, process_chat
 from app.services.chat_queue import chat_queue, Priority
+from app.services.timezones import remember_timezone
 
 router = APIRouter(prefix="/shared-calendars", tags=["Shared Calendars"])
 
@@ -359,6 +360,7 @@ async def send_shared_chat_message(
             message=enriched_prompt,
             user_id=current_user.id,
             db=db,
+            timezone_name=remember_timezone(db, current_user, chat_req.timezone),
         )
     except LLMUnavailableError as exc:
         raise HTTPException(

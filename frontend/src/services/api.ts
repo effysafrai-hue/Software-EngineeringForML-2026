@@ -27,6 +27,23 @@ class ApiError extends Error {
   }
 }
 
+/**
+ * The reader's IANA zone, e.g. "Asia/Jerusalem".
+ *
+ * Event times cross the wire as UTC instants and are rendered locally, which
+ * needs no help. The AI is the exception: it has to be told which wall clock
+ * "6pm" refers to, or it writes 18:00 UTC and the calendar shows 21:00.
+ * Undefined on an ancient browser, in which case the server falls back to the
+ * zone this user last reported.
+ */
+function browserTimezone(): string | undefined {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 async function request<T>(
   endpoint: string,
   options: RequestInit = {},
@@ -118,12 +135,14 @@ export const api = {
     ),
 
   // AI Chat (Personal)
+  // The browser's IANA zone goes with every message: "6pm" means 6pm here, and
+  // the server needs to know which wall clock that is before it writes an event.
   sendChat: (token: string, message: string) =>
     request<ChatResponse>(
       '/chat',
       {
         method: 'POST',
-        body: JSON.stringify({ message }),
+        body: JSON.stringify({ message, timezone: browserTimezone() }),
       },
       token
     ),
@@ -201,7 +220,7 @@ export const api = {
       `/shared-calendars/${calendarId}/chat`,
       {
         method: 'POST',
-        body: JSON.stringify({ message }),
+        body: JSON.stringify({ message, timezone: browserTimezone() }),
       },
       token
     ),

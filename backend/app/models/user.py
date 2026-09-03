@@ -16,6 +16,10 @@ class User(Base):
         nullable=False,
     )
     preferences = Column(JSON, nullable=True, default=dict)
+    # IANA zone name, last reported by this user's browser. The wall clock the
+    # assistant reads and writes is this zone's, so "6pm" means 6pm where they
+    # are. Null until they send a chat request; DEFAULT_TIMEZONE covers that gap.
+    timezone = Column(String(64), nullable=True)
 
     events = relationship("Event", back_populates="user", cascade="all, delete-orphan")
     chat_messages = relationship(

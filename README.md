@@ -45,6 +45,7 @@ working default, and `.env` is gitignored.
 | `JWT_SECRET_KEY` | **Yes** for anything but localhost | Falls back to the value published in this repository, so anyone could forge a token for any account. The server logs a warning at startup while that default is in use. Generate one with `openssl rand -hex 32` |
 | `LLM_PROVIDER` | No (`gemini`) | `gemini` or `ollama` — see [switching to the local LLM](#4-optional-switch-to-the-local-llm) |
 | `POSTGRES_USER` / `_PASSWORD` / `_DB`, `DATABASE_URL` | No | Defaults to `postgres:postgres@postgres:5432/se_ml_effy`, which is fine for a local container and must be changed for anything else |
+| `DEFAULT_TIMEZONE` | No (`UTC`) | The wall clock the assistant uses for a user whose browser has not reported a zone. The browser's zone always wins when present, so this is a fallback — but set it to your own zone anyway (`Asia/Jerusalem`), because on UTC an unreported user's "6pm" renders at their real offset |
 | `ACCESS_TOKEN_EXPIRE_MINUTES`, `REFRESH_TOKEN_EXPIRE_DAYS` | No | 30 minutes / 7 days |
 | `RATE_LIMIT_*` (8 vars) | No | The per-user anti-spam budgets listed in `.env.example` |
 | `CORS_ORIGINS` | No | `["http://localhost:5173", "http://127.0.0.1:5173"]`. Change it if you serve the frontend from another origin, or every request fails CORS |
@@ -142,6 +143,7 @@ docker compose exec backend alembic downgrade -1   # roll back one migration
 | Requests fail with a CORS error | `CORS_ORIGINS` does not include the origin the browser loaded the app from |
 | `llama-server process has terminated: signal: killed` | The Docker VM does not have ~5 GB free for the local model. Check with `docker compose exec ollama free -h`, or switch back to Gemini |
 | Login works, then everything is 401 | The access token expired (30 min by default). Log in again, or raise `ACCESS_TOKEN_EXPIRE_MINUTES` |
+| The AI says "6pm" but the event lands at another hour | The browser's timezone is not reaching the server. Hard-reload the frontend (an old bundle sends no `timezone` field) and set `DEFAULT_TIMEZONE` to your zone as a backstop. See [Times and timezones](#-times-and-timezones) |
 
 ### Running the tests
 
@@ -175,7 +177,7 @@ requests-per-minute quota and return 429s (run it a file at a time if so), and
 `tests/test_courses.py` is marked live at module level because its seeding
 fixture calls the embeddings endpoint, not only because of the assertions.
 
-The offline half is **209 tests** and needs no key, no network and no model.
+The offline half is **237 tests** and needs no key, no network and no model.
 
 ---
 
@@ -243,6 +245,37 @@ end to end.
 On Ollama, if a scheduling test fails on `llama3.1:8b`, a larger quantisation
 (`llama3.1:8b-instruct-q8_0`) or `qwen2.5:7b-instruct` follows tool schemas more
 reliably.
+
+---
+
+## 🕒 Times and timezones
+
+The database stores **instants in UTC**; the browser renders them in the
+reader's zone. The manual calendar path needs nothing more than that — the event
+modal converts local → UTC with `toISOString()` on save and back on display.
+
+The AI path is the one place a zone has to be chosen explicitly, because a user
+who says *"6pm"* means 6pm **where they are**. So:
+
+- The frontend sends `Intl.DateTimeFormat().resolvedOptions().timeZone` with
+  every chat message; the server remembers it on the user (`users.timezone`) for
+  anything that runs without a request in hand, and falls back to
+  `DEFAULT_TIMEZONE`.
+- The prompt states the user's zone, their **local** current time, their local
+  weekday table, and their offset as a literal to copy — the model is told
+  never to convert to UTC and never to write `Z`.
+- Timestamps coming back from the model are read as that zone's wall clock and
+  converted to UTC once, on the way into the database.
+- Tool results are rendered **back** into local time, so the hour the assistant
+  quotes in its reply is the hour on the calendar.
+
+Two bugs this fixes, both silent before: "set it for 6pm" storing 18:00 UTC and
+displaying as 21:00 for a user at UTC+3, and a late-evening request resolving
+"today" to the UTC date — a day behind, east of UTC. Covered by
+`tests/test_timezones.py` (28 offline tests plus one live-model check).
+
+Note that `tzdata` is a dependency: without the IANA database, `zoneinfo`
+silently has no zones to resolve and every wall clock falls back to UTC.
 
 ---
 

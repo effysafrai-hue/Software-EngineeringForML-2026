@@ -18,7 +18,7 @@ def stub_llm(monkeypatch):
     """Replace the model call with a canned reply, recording what it was asked."""
     seen = []
 
-    def fake_process_chat(message, user_id, db, reference_time=None):
+    def fake_process_chat(message, user_id, db, reference_time=None, timezone_name=None):
         seen.append({"message": message, "user_id": user_id})
         return {"reply": f"Noted: {message}", "action_taken": "create_event"}
 
@@ -28,7 +28,7 @@ def stub_llm(monkeypatch):
 
 @pytest.fixture
 def broken_llm(monkeypatch):
-    def fake_process_chat(message, user_id, db, reference_time=None):
+    def fake_process_chat(message, user_id, db, reference_time=None, timezone_name=None):
         raise LLMUnavailableError("model is not reachable")
 
     monkeypatch.setattr("app.api.routes.chat.process_chat", fake_process_chat)

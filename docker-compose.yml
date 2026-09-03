@@ -97,6 +97,7 @@ services:
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-3.6-flash}
       - PROJECT_NAME=${PROJECT_NAME:-SE_ML_effy}
+      - DEFAULT_TIMEZONE=${DEFAULT_TIMEZONE:-UTC}
       - CORS_ORIGINS=${CORS_ORIGINS:-["http://localhost:5173", "http://127.0.0.1:5173"]}
       - RATE_LIMIT_LOGIN=${RATE_LIMIT_LOGIN:-5/minute}
       - RATE_LIMIT_SIGNUP=${RATE_LIMIT_SIGNUP:-5/minute}

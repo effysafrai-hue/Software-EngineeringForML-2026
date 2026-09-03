@@ -15,6 +15,14 @@ from app.services.user_memory import (
     build_memory_context,
     build_memory_tools,
 )
+from app.services.timezones import (
+    local_wall_clock_to_utc,
+    now_in,
+    offset_label,
+    resolve_timezone,
+    to_local,
+    zone_name,
+)
 
 logger = logging.getLogger("ai_agent")
 logger.setLevel(logging.DEBUG)
@@ -75,25 +83,53 @@ def resolve_best_gemini_model() -> str:
     return _RESOLVED_MODEL_NAME
 
 
-def parse_iso_datetime(dt_str: str) -> datetime:
-    """Parse an absolute ISO 8601 timestamp, assuming UTC when no offset is given.
+def parse_iso_datetime(dt_str: str, tz=timezone.utc) -> datetime:
+    """Read an ISO 8601 timestamp from the model as a wall clock in `tz`.
 
     Only absolute timestamps are accepted. A loose parser would turn a relative
     phrase like "Saturday 4pm" into a date anchored to the real clock rather than
     the conversation's reference time, quietly storing the wrong day; the caller
     reports the rejection to the model instead, which can then send a real
     timestamp.
+
+    The date and time fields are always read as `tz`'s wall clock and any zone
+    the model attached is discarded. That is deliberate, and it is the fix for
+    "the assistant said 6pm but the calendar shows 9pm":
+
+    * The user says "6pm" and means 6pm where they are. The prompt tells the
+      model the local date, the local time and the local offset, and asks it to
+      write the wall clock it was given — never to convert.
+    * A "Z" or an offset therefore adds nothing, and when the model appends one
+      out of habit (it is trained on UTC-shaped ISO strings) the two readings
+      disagree: "18:00:00Z" for a UTC+3 user is either 18:00 local, which is
+      what the user asked for and what the assistant's own reply will quote, or
+      21:00 local, which is neither. Reading the wall clock keeps the stored
+      event, the reply and the calendar saying the same hour.
+
+    The cost is a user who explicitly says "6pm UTC" while in another zone; that
+    is rare here, and it fails visibly (the reply quotes the hour that was
+    stored) rather than silently.
     """
     if not dt_str:
         raise ValueError("Empty datetime string")
     clean_str = str(dt_str).strip().strip("'\"").replace("Z", "+00:00").replace("z", "+00:00")
     dt = datetime.fromisoformat(clean_str)
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt
+    return local_wall_clock_to_utc(dt, tz)
 
 
-def _unknown_event_error(user_id: int, db: Session, event_id: Any, tool_name: str) -> Dict[str, Any]:
+def _local_iso(value: datetime, tz) -> str:
+    """A stored instant, rendered as the wall clock the user sees.
+
+    Tool results go straight back to the model, and it quotes them in its reply.
+    Handing back UTC is what made the assistant announce a different hour from
+    the one on the calendar.
+    """
+    return to_local(value, tz).isoformat()
+
+
+def _unknown_event_error(
+    user_id: int, db: Session, event_id: Any, tool_name: str, tz=timezone.utc
+) -> Dict[str, Any]:
     """Tell the model the id was wrong, and hand it the real ones.
 
     Picking "the only event this user has" instead would let the assistant edit
@@ -109,7 +145,7 @@ def _unknown_event_error(user_id: int, db: Session, event_id: Any, tool_name: st
             "or tell the user there is no such event."
         ),
         "existing_events": [
-            {"id": ev.id, "title": ev.title, "start_time": ev.start_time.isoformat()}
+            {"id": ev.id, "title": ev.title, "start_time": _local_iso(ev.start_time, tz)}
             for ev in existing
         ],
     }
@@ -122,6 +158,7 @@ def create_event_tool(
     start_time: str,
     end_time: str,
     description: Optional[str] = None,
+    tz=timezone.utc,
 ) -> Dict[str, Any]:
     # A malformed timestamp or a missing title is reported back to the model
     # instead of being guessed at: substituting a value would store an event the
@@ -133,12 +170,16 @@ def create_event_tool(
             "message": "title is required. Call create_event again with a short title describing the event.",
         }
 
+    example_offset = offset_label(tz)
     try:
-        start_dt = parse_iso_datetime(start_time)
+        start_dt = parse_iso_datetime(start_time, tz)
     except Exception:
         return {
             "status": "error",
-            "message": f"Could not read start_time {start_time!r}. Pass a full ISO 8601 timestamp such as 2026-06-11T09:00:00Z and call create_event again.",
+            "message": (
+                f"Could not read start_time {start_time!r}. Pass a full local ISO 8601 timestamp "
+                f"such as 2026-06-11T09:00:00{example_offset} and call create_event again."
+            ),
         }
 
     if end_time is None or not str(end_time).strip():
@@ -146,11 +187,14 @@ def create_event_tool(
         end_dt = start_dt + timedelta(hours=1)
     else:
         try:
-            end_dt = parse_iso_datetime(end_time)
+            end_dt = parse_iso_datetime(end_time, tz)
         except Exception:
             return {
                 "status": "error",
-                "message": f"Could not read end_time {end_time!r}. Pass a full ISO 8601 timestamp such as 2026-06-11T10:00:00Z and call create_event again.",
+                "message": (
+                    f"Could not read end_time {end_time!r}. Pass a full local ISO 8601 timestamp "
+                    f"such as 2026-06-11T10:00:00{example_offset} and call create_event again."
+                ),
             }
 
     if end_dt <= start_dt:
@@ -167,16 +211,18 @@ def create_event_tool(
     db.commit()
     db.refresh(event)
 
+    # Times echoed back to the model are local, so the sentence it writes to the
+    # user names the same hour the calendar will show.
     return {
         "status": "success",
         "action": "create_event",
-        "message": f"Created '{event.title}' starting at {event.start_time.isoformat()}.",
+        "message": f"Created '{event.title}' starting at {_local_iso(event.start_time, tz)}.",
         "event": {
             "id": event.id,
             "title": event.title,
             "description": event.description,
-            "start_time": event.start_time.isoformat(),
-            "end_time": event.end_time.isoformat(),
+            "start_time": _local_iso(event.start_time, tz),
+            "end_time": _local_iso(event.end_time, tz),
         },
     }
 
@@ -189,31 +235,40 @@ def update_event_tool(
     start_time: Optional[str] = None,
     end_time: Optional[str] = None,
     description: Optional[str] = None,
+    tz=timezone.utc,
 ) -> Dict[str, Any]:
     event = None
     if event_id:
         event = db.query(Event).filter(Event.id == event_id, Event.user_id == user_id).first()
     if not event:
-        return _unknown_event_error(user_id, db, event_id, "update_event")
+        return _unknown_event_error(user_id, db, event_id, "update_event", tz)
+
+    example_offset = offset_label(tz)
 
     # Parse before mutating so a bad timestamp leaves the event untouched.
     new_start: Optional[datetime] = None
     new_end: Optional[datetime] = None
     if start_time is not None and start_time.strip():
         try:
-            new_start = parse_iso_datetime(start_time)
+            new_start = parse_iso_datetime(start_time, tz)
         except Exception:
             return {
                 "status": "error",
-                "message": f"Could not read start_time {start_time!r}. Pass a full ISO 8601 timestamp such as 2026-06-15T11:00:00Z and call update_event again.",
+                "message": (
+                    f"Could not read start_time {start_time!r}. Pass a full local ISO 8601 timestamp "
+                    f"such as 2026-06-15T11:00:00{example_offset} and call update_event again."
+                ),
             }
     if end_time is not None and end_time.strip():
         try:
-            new_end = parse_iso_datetime(end_time)
+            new_end = parse_iso_datetime(end_time, tz)
         except Exception:
             return {
                 "status": "error",
-                "message": f"Could not read end_time {end_time!r}. Pass a full ISO 8601 timestamp such as 2026-06-15T12:00:00Z and call update_event again.",
+                "message": (
+                    f"Could not read end_time {end_time!r}. Pass a full local ISO 8601 timestamp "
+                    f"such as 2026-06-15T12:00:00{example_offset} and call update_event again."
+                ),
             }
 
     original_duration = event.end_time - event.start_time
@@ -243,8 +298,8 @@ def update_event_tool(
         "event": {
             "id": event.id,
             "title": event.title,
-            "start_time": event.start_time.isoformat(),
-            "end_time": event.end_time.isoformat(),
+            "start_time": _local_iso(event.start_time, tz),
+            "end_time": _local_iso(event.end_time, tz),
         },
     }
 
@@ -253,12 +308,13 @@ def delete_event_tool(
     user_id: int,
     db: Session,
     event_id: int,
+    tz=timezone.utc,
 ) -> Dict[str, Any]:
     event = None
     if event_id:
         event = db.query(Event).filter(Event.id == event_id, Event.user_id == user_id).first()
     if not event:
-        return _unknown_event_error(user_id, db, event_id, "delete_event")
+        return _unknown_event_error(user_id, db, event_id, "delete_event", tz)
 
     event_title = event.title
     db.delete(event)
@@ -277,19 +333,20 @@ def list_events_tool(
     start_time: Optional[str] = None,
     end_time: Optional[str] = None,
     search_query: Optional[str] = None,
+    tz=timezone.utc,
 ) -> Dict[str, Any]:
     query = db.query(Event).filter(Event.user_id == user_id)
 
     if start_time and start_time.strip():
         try:
-            start_dt = parse_iso_datetime(start_time)
+            start_dt = parse_iso_datetime(start_time, tz)
             query = query.filter(Event.end_time >= start_dt)
         except Exception:
             pass
 
     if end_time and end_time.strip():
         try:
-            end_dt = parse_iso_datetime(end_time)
+            end_dt = parse_iso_datetime(end_time, tz)
             query = query.filter(Event.start_time <= end_dt)
         except Exception:
             pass
@@ -317,8 +374,8 @@ def list_events_tool(
                 "id": ev.id,
                 "title": ev.title,
                 "description": ev.description,
-                "start_time": ev.start_time.isoformat(),
-                "end_time": ev.end_time.isoformat(),
+                "start_time": _local_iso(ev.start_time, tz),
+                "end_time": _local_iso(ev.end_time, tz),
             }
             for ev in events
         ],
@@ -344,8 +401,8 @@ TOOL_SCHEMAS = [
                 "type": "object",
                 "properties": {
                     "title": {"type": "string", "description": "Title/name of the event."},
-                    "start_time": {"type": "string", "description": "ISO 8601 formatted start datetime (e.g. 2026-06-17T17:00:00Z)."},
-                    "end_time": {"type": "string", "description": "ISO 8601 formatted end datetime."},
+                    "start_time": {"type": "string", "description": "Start datetime as the user's LOCAL ISO 8601 wall clock, never converted to UTC (e.g. 2026-06-17T17:00:00+03:00)."},
+                    "end_time": {"type": "string", "description": "End datetime as the user's LOCAL ISO 8601 wall clock."},
                     "description": {"type": "string", "description": "Optional notes or event description."}
                 },
                 "required": ["title", "start_time", "end_time"]
@@ -362,8 +419,8 @@ TOOL_SCHEMAS = [
                 "properties": {
                     "event_id": {"type": "integer", "description": "The unique integer ID of the event to update."},
                     "title": {"type": "string", "description": "Updated title."},
-                    "start_time": {"type": "string", "description": "Updated ISO 8601 start time."},
-                    "end_time": {"type": "string", "description": "Updated ISO 8601 end time."},
+                    "start_time": {"type": "string", "description": "Updated start time as the user's LOCAL ISO 8601 wall clock, never converted to UTC."},
+                    "end_time": {"type": "string", "description": "Updated end time as the user's LOCAL ISO 8601 wall clock."},
                     "description": {"type": "string", "description": "Updated description."}
                 },
                 "required": ["event_id"]
@@ -392,8 +449,8 @@ TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "start_time": {"type": "string", "description": "Optional lower bound ISO 8601 datetime."},
-                    "end_time": {"type": "string", "description": "Optional upper bound ISO 8601 datetime."},
+                    "start_time": {"type": "string", "description": "Optional lower bound, as the user's LOCAL ISO 8601 wall clock."},
+                    "end_time": {"type": "string", "description": "Optional upper bound, as the user's LOCAL ISO 8601 wall clock."},
                     "search_query": {"type": "string", "description": "Optional search term to filter event titles/descriptions."}
                 }
             }
@@ -407,8 +464,19 @@ def process_chat(
     user_id: int,
     db: Session,
     reference_time: Optional[datetime] = None,
+    timezone_name: Optional[str] = None,
 ) -> Dict[str, Any]:
-    ref_time = reference_time or datetime.now(timezone.utc)
+    """Answer one chat turn.
+
+    `timezone_name` is the caller's IANA zone (the browser's, forwarded by the
+    route). Every wall clock in the prompt, in the tool arguments and in the
+    tool results is that zone's; only the database keeps UTC. Without it the
+    assistant reads and writes UTC wall clocks, which is how "set it for 6pm"
+    became a 9pm event for a user at UTC+3.
+    """
+    tz = resolve_timezone(timezone_name)
+    # Local, so "today", "tomorrow" and "18:00" all mean what the user means.
+    ref_time = to_local(reference_time, tz) if reference_time else now_in(tz)
     provider = (settings.LLM_PROVIDER or "gemini").strip().lower()
 
     grounding_info = retrieve_relevant_courses(message, db)
@@ -442,17 +510,25 @@ def process_chat(
     next_week_start = (ref_time + timedelta(days=7)).strftime("%Y-%m-%d")
     next_week_end = (ref_time + timedelta(days=13)).strftime("%Y-%m-%d")
 
+    # Handed to the model as a literal to copy, rather than something to compute:
+    # asking it to do offset arithmetic is asking for a three-hour mistake.
+    local_zone_label = zone_name(tz)
+    local_offset = offset_label(tz, ref_time)
+
     system_instruction = f"""You are the scheduling assistant of a campus app. You manage the user's calendar with the tools you are given, and answer course questions from the verified knowledge base below.
 
-# DATE AND TIME (all times UTC)
-Today is {day_name}, {ref_time.strftime('%Y-%m-%d')}. The current time is {now_iso}.
+# DATE AND TIME
+Every time you read or write is the user's LOCAL wall clock, in {local_zone_label}. Their offset from UTC right now is {local_offset}.
+Today is {day_name}, {ref_time.strftime('%Y-%m-%d')}. The current local time is {now_iso}.
 A weekday name always means its NEXT occurrence, given by this table - never today, unless the user literally says "today" or "tonight":
 {weekday_table}
 "next week" means {next_week_start} to {next_week_end}.
 - Convert clock times to 24h: "3pm" -> 15:00, "5pm" -> 17:00, "11am" -> 11:00.
 - With no time of day given, use 09:00:00 to 10:00:00 on that date.
 - With no duration given, make the event 1 hour. With a duration given, use it exactly: "3pm for 45 minutes" -> 15:00:00 to 15:45:00.
-- start_time and end_time are always full ISO 8601 with Z, e.g. "{upcoming_days[0].strftime('%Y-%m-%d')}T09:00:00Z".
+- NEVER convert a time to UTC and never write "Z". The hour the user says is the hour you write: "6pm" -> "18:00:00", not "15:00:00".
+- start_time and end_time are always a full ISO 8601 local timestamp ending in {local_offset}, e.g. "{upcoming_days[0].strftime('%Y-%m-%d')}T09:00:00{local_offset}".
+- Times the tools give back are already local, so quote them to the user exactly as they come. The hour you say must be the hour that is on their calendar.
 
 # LONG-TERM MEMORY
 {memory_context_str}
@@ -498,7 +574,7 @@ A weekday name always means its NEXT occurrence, given by this table - never tod
         return result
 
     def create_event(title: str, start_time: str, end_time: str, description: str = "") -> dict:
-        return _record("create_event", create_event_tool(user_id, db, title, start_time, end_time, description))
+        return _record("create_event", create_event_tool(user_id, db, title, start_time, end_time, description, tz))
 
     def update_event(
         event_id: int,
@@ -515,15 +591,16 @@ A weekday name always means its NEXT occurrence, given by this table - never tod
             start_time or None,
             end_time or None,
             description or None,
+            tz,
         ))
 
     def delete_event(event_id: int) -> dict:
-        return _record("delete_event", delete_event_tool(user_id, db, event_id))
+        return _record("delete_event", delete_event_tool(user_id, db, event_id, tz))
 
     def list_events(start_time: str = "", end_time: str = "", search_query: str = "") -> dict:
         return _record(
             "list_events",
-            list_events_tool(user_id, db, start_time or None, end_time or None, search_query or None),
+            list_events_tool(user_id, db, start_time or None, end_time or None, search_query or None, tz),
         )
 
     tools = [create_event, update_event, delete_event, list_events, *memory_toolkit.tools]

@@ -9,6 +9,7 @@ from app.models.user import User
 from app.schemas.chat import ChatMessageResponse, ChatRequest, ChatResponse
 from app.services.ai_agent import LLMUnavailableError, process_chat
 from app.services.chat_queue import chat_queue, Priority
+from app.services.timezones import remember_timezone
 
 router = APIRouter(prefix="/chat", tags=["AI Chat"])
 
@@ -25,6 +26,10 @@ async def send_chat_message(
             detail="Message content cannot be empty",
         )
 
+    # The wall clock the assistant reads and writes is this user's, so their zone
+    # is resolved (and remembered) before the model is given the turn.
+    timezone_name = remember_timezone(db, current_user, chat_req.timezone)
+
     user_msg = ChatMessage(
         user_id=current_user.id,
         role="user",
@@ -40,6 +45,7 @@ async def send_chat_message(
             message=chat_req.message,
             user_id=current_user.id,
             db=db,
+            timezone_name=timezone_name,
         )
     except LLMUnavailableError as exc:
         raise HTTPException(

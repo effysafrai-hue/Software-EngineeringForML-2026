@@ -220,7 +220,7 @@ def stub_shared_llm(monkeypatch):
     """Canned assistant reply, recording the prompt the route assembled."""
     seen = []
 
-    def fake_process_chat(message, user_id, db, reference_time=None):
+    def fake_process_chat(message, user_id, db, reference_time=None, timezone_name=None):
         seen.append(message)
         return {"reply": "Understood, noted for the group.", "action_taken": None}
 
@@ -342,7 +342,7 @@ def test_an_event_created_through_shared_chat_lands_on_the_shared_calendar(
     """Requirement 4.3 — a user's own chat can add tasks to the shared calendar."""
     cal_id = _calendar_with_both_members(client, auth_headers_user_a)
 
-    def fake_process_chat(message, user_id, db, reference_time=None):
+    def fake_process_chat(message, user_id, db, reference_time=None, timezone_name=None):
         # Stand in for the model's create_event tool call.
         start = datetime(2026, 7, 2, 9, 0, 0, tzinfo=timezone.utc)
         db.add(Event(user_id=user_id, title="Group revision session", start_time=start, end_time=start + timedelta(hours=1)))
@@ -372,7 +372,7 @@ def test_shared_chat_reports_an_unavailable_model_as_503(client, auth_headers_us
 
     cal_id = _calendar_with_both_members(client, auth_headers_user_a)
 
-    def broken(message, user_id, db, reference_time=None):
+    def broken(message, user_id, db, reference_time=None, timezone_name=None):
         raise LLMUnavailableError("model is not reachable")
 
     monkeypatch.setattr("app.api.routes.shared_calendars.process_chat", broken)

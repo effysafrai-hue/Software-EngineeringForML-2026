@@ -12,6 +12,11 @@ python-jose[cryptography]==3.3.0
 slowapi==0.1.9
 google-generativeai>=0.4.1
 python-dateutil==2.9.0.post0
+# IANA zone database for `zoneinfo`. Linux images usually carry the system one,
+# but Windows never does and a slim image may not either — without it
+# ZoneInfo("Asia/Jerusalem") raises and every wall clock silently falls back to
+# UTC, which is the bug the timezone handling exists to prevent.
+tzdata>=2024.1
 apscheduler>=3.10.4
 websockets>=12.0
 pytest==8.1.1
