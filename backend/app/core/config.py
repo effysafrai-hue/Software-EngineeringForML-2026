@@ -15,6 +15,16 @@ class Settings(BaseSettings):
     RATE_LIMIT_LOGIN: str = "5/minute"
     RATE_LIMIT_SIGNUP: str = "5/minute"
 
+    # Anti-spam budgets for user-generated content. Keyed per authenticated user
+    # (see app.core.limiter.user_or_ip_key), not per IP, so one abusive account
+    # cannot be hidden behind a shared campus NAT and so a shared NAT cannot
+    # throttle everyone on it.
+    RATE_LIMIT_POST: str = "5/minute"
+    RATE_LIMIT_COMMENT: str = "15/minute"
+    RATE_LIMIT_MESSAGE: str = "20/minute"
+    RATE_LIMIT_REACTION: str = "60/minute"
+    RATE_LIMIT_UPLOAD: str = "10/minute"
+
     # LLM Provider Configuration.
     # Gemini is the default: the agent needs an 8B-class tool-calling model, and
     # running one locally costs ~5GB of RAM that a containerised dev box does not

@@ -15,7 +15,7 @@ os.environ.setdefault("OLLAMA_TIMEOUT", "300.0")
 from app.main import app
 from app.db.session import Base, get_db
 from app.core.security import get_password_hash, create_access_token
-from app.core.limiter import limiter
+from app.core.limiter import reset_rate_limits as _reset_rate_limits
 from app.models.user import User
 
 # In-memory SQLite for high-speed, isolated test execution
@@ -31,16 +31,14 @@ TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engin
 
 @pytest.fixture(autouse=True)
 def reset_rate_limits():
-    """Reset SlowAPI rate limit storage before and after each test."""
-    try:
-        limiter.reset()
-    except Exception:
-        pass
+    """Reset SlowAPI rate limit storage before and after each test.
+
+    Limits are keyed per user, so without this the posts one test creates would
+    eat into the budget of every later test using the same account.
+    """
+    _reset_rate_limits()
     yield
-    try:
-        limiter.reset()
-    except Exception:
-        pass
+    _reset_rate_limits()
 
 
 @pytest.fixture(scope="function")
