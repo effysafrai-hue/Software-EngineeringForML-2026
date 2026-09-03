@@ -1,7 +1,6 @@
 import asyncio
-import json
 import logging
-from typing import Dict, List
+from typing import Dict, List, Optional
 from fastapi import WebSocket
 
 logger = logging.getLogger("ws_manager")
@@ -12,6 +11,17 @@ class ConnectionManager:
 
     def __init__(self):
         self.active_connections: Dict[int, List[WebSocket]] = {}
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+
+    def bind_loop(self, loop: asyncio.AbstractEventLoop) -> None:
+        """Record the loop the sockets live on.
+
+        A WebSocket may only be written from the loop that accepted it. Both the
+        APScheduler thread and the sync route handlers (FastAPI runs `def`
+        endpoints in a worker thread) are off that loop, so they need a handle
+        to hand work back to it. Called once from the app lifespan.
+        """
+        self._loop = loop
 
     async def connect(self, user_id: int, websocket: WebSocket):
         await websocket.accept()
@@ -42,21 +52,54 @@ class ConnectionManager:
         for ws in dead:
             self.disconnect(user_id, ws)
 
+    async def broadcast(self, data: dict, exclude_user_id: Optional[int] = None):
+        """Fan a payload out to every connected user.
+
+        Used for public forum activity (new post, new comment, changed reaction
+        counts) so open feeds update without polling. Never use it for anything
+        addressed to specific people — direct messages go through send_to_user.
+        """
+        for user_id in list(self.active_connections.keys()):
+            if exclude_user_id is not None and user_id == exclude_user_id:
+                continue
+            await self.send_to_user(user_id, data)
+
     def send_to_user_sync(self, user_id: int, data: dict):
-        """Synchronous wrapper to push a notification (called from APScheduler thread)."""
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                asyncio.ensure_future(self.send_to_user(user_id, data))
-            else:
-                loop.run_until_complete(self.send_to_user(user_id, data))
-        except RuntimeError:
-            # No running event loop; create one
+        """Push to one user from outside the event loop (scheduler or sync route)."""
+        self._dispatch(self.send_to_user(user_id, data))
+
+    def broadcast_sync(self, data: dict, exclude_user_id: Optional[int] = None):
+        """Fan out from outside the event loop."""
+        self._dispatch(self.broadcast(data, exclude_user_id=exclude_user_id))
+
+    def _dispatch(self, coro) -> None:
+        """Run a send coroutine on the socket-owning loop, from any thread.
+
+        Best-effort by design: a websocket push that fails must never turn a
+        successful post or message into an error response. The durable record is
+        the Notification row, which the client can still fetch over HTTP.
+        """
+        loop = self._loop
+        if loop is not None and loop.is_running():
             try:
-                loop = asyncio.new_event_loop()
-                loop.run_until_complete(self.send_to_user(user_id, data))
-            except Exception:
-                pass
+                asyncio.run_coroutine_threadsafe(coro, loop)
+                return
+            except Exception as e:
+                logger.warning(f"WebSocket dispatch to bound loop failed: {e}")
+
+        # No bound loop (unit tests, scripts). If we happen to already be on a
+        # running loop, schedule there; otherwise drop the push and close the
+        # coroutine so it does not raise "never awaited".
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+
+        if running is not None:
+            asyncio.ensure_future(coro)
+            return
+
+        coro.close()
 
 
 # Singleton instance

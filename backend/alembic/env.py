@@ -8,7 +8,10 @@ sys.path.insert(0, os.path.realpath(os.path.join(os.path.dirname(__file__), ".."
 
 from app.core.config import settings
 from app.db.session import Base
-from app.models import User, Event, ChatMessage
+# Importing the package registers every model on Base.metadata, which is what
+# autogenerate diffs against. Naming individual models here instead would silently
+# hide any table left off the list.
+import app.models  # noqa: F401
 
 config = context.config
 

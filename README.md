@@ -112,11 +112,77 @@ schemas more reliably.
 
 ---
 
+## 💬 Forum, Reactions & Direct Messages
+
+### Seeding a cold forum
+
+An empty forum gives a first visitor nothing to react to. Run once after migrations:
+
+```bash
+docker compose exec backend alembic upgrade head
+docker compose exec backend python -m app.db.seed_forum
+```
+
+It creates four demo accounts (`*.demo@campus.example`, password `DemoPassword123!`)
+with five posts, comments, reactions and a short DM thread. It is idempotent — a
+second run adds nothing. **The demo accounts share one well-known password; do not
+seed them into an internet-facing deployment.**
+
+### Endpoints added
+
+| Method & path | Purpose |
+| :--- | :--- |
+| `PUT` / `DELETE` `/posts/{id}/reactions` | Set or clear the caller's like/dislike. One row per user per item — changing your mind updates it |
+| `PUT` / `DELETE` `/comments/{id}/reactions` | The same for a comment |
+| `GET /posts/mine` | The caller's own posts plus `total_likes` / `total_dislikes` received |
+| `POST /posts/{id}/share-as-event` | Copy a post onto the **caller's** calendar. Body: `start_time`, optional `end_time` (defaults to +1h) and `title` |
+| `POST /messages` | Send a DM (`receiver_id`, `body`, `media_urls`) |
+| `GET /messages/{other_user_id}` | The thread between the caller and one other user |
+| `POST /messages/{other_user_id}/read` | Mark that thread read. Explicit, so a GET stays idempotent |
+
+Every post/comment response now also carries `like_count`, `dislike_count` and
+`my_reaction` (the caller's own, or `null`).
+
+### Real-time frames
+
+All pushed over the existing `/ws/notifications` socket. Clients switch on `type`:
+
+| `type` | Delivery | Payload |
+| :--- | :--- | :--- |
+| `forum.post.created` | broadcast | `post` (anonymity-masked) |
+| `forum.comment.created` | broadcast + notification to the post author | `post_id`, `comment` |
+| `forum.reaction.changed` | broadcast + notification to the post author | `post_id`, `comment_id`, counts |
+| `dm.message.created` | the two parties only, never broadcast | `message_data` |
+
+Anything addressed to a specific person goes through `send_to_user`; `broadcast`
+carries only content that is already public through the REST API, with the same
+masking. Notifications are persisted as `Notification` rows too, so they survive a
+disconnect and still appear in `GET /notifications`.
+
+### Abuse protections
+
+- **Per-user rate limits** (`RATE_LIMIT_POST`, `_COMMENT`, `_MESSAGE`, `_REACTION`,
+  `_UPLOAD`). Keyed on the JWT subject rather than the client address, so one
+  account cannot hide behind a shared campus NAT and a shared NAT cannot throttle
+  everyone on it. Exceeding a limit returns 429.
+- **Upload limits are server-side** in `app/services/upload_service.py` (10MB
+  images / 100MB video, content-type allow-list), enforced while streaming so an
+  oversized file is refused without being written.
+- **`media_urls` must be paths this server minted** under `/uploads/`. An absolute
+  or protocol-relative URL is refused, so the field cannot become an injection
+  point for whatever renders it.
+- **Bodies are stripped of all markup** (`app/services/sanitize.py`). Forum text is
+  plain text, so the policy is "no tags at all" rather than a tag allow-list, which
+  an attribute payload like `<img onerror=…>` can slip past. Known limitation: the
+  content-type check trusts the client's header rather than sniffing magic bytes.
+
+---
+
 ## 🏗️ Architecture & Features
 
 - **Frontend**: React 18, Vite, TypeScript, Tailwind CSS, Lucide Icons.
 - **Backend**: FastAPI (Python 3.12), SQLAlchemy 2.0, Alembic, SlowAPI (rate limiting).
 - **Database**: PostgreSQL 16 with `pgvector` extension.
 - **AI & LLM**: Switchable dual provider (`LLM_PROVIDER=gemini|ollama`) with priority queue worker pool (`asyncio.PriorityQueue`).
-- **Real-Time**: WebSocket notification hub (`/ws/notifications`) with auto-reconnect and live reminder broadcasts.
-- **Community Forum**: Anonymous posting, media upload validation, post/comment threading, and calendar event conversion.
+- **Real-Time**: WebSocket notification hub (`/ws/notifications`) with auto-reconnect, live reminder broadcasts, and live forum/DM frames.
+- **Community Forum**: Anonymous posting, media upload validation, post/comment threading, likes/dislikes, direct messages, and calendar event conversion.
