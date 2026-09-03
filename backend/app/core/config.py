@@ -46,11 +46,11 @@ class Settings(BaseSettings):
     OLLAMA_KEEP_ALIVE: str = "24h"
 
     GEMINI_API_KEY: str = ""
-    # gemini-2.0-flash is picked over 2.5-flash for a higher free-tier request
-    # rate and lower latency; the whole suite is short extraction calls. If the
-    # disambiguation tests come out flaky, gemini-2.5-flash follows the prompt's
-    # "ask, don't guess" rules more closely at half the requests per minute.
-    GEMINI_MODEL: str = "gemini-2.0-flash"
+    # The current flash model. Older ids (2.5, 2.0, 1.5) are progressively being
+    # closed to new projects and answer NOT_FOUND at generate time even though
+    # list_models() still returns them, so prefer the newest and let
+    # llm_client.FALLBACK_GEMINI_MODELS walk backwards if a key cannot reach it.
+    GEMINI_MODEL: str = "gemini-3.6-flash"
 
     model_config = SettingsConfigDict(
         env_file=".env",

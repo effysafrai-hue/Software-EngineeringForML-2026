@@ -25,6 +25,34 @@ except ImportError:
 
 _RESOLVED_GEMINI_MODEL: Optional[str] = None
 
+# Newest first. list_models() also returns models that are listed but closed to
+# new projects, and those only fail at generate time with NOT_FOUND — so a model
+# that fails that way is recorded here and never chosen again this process.
+FALLBACK_GEMINI_MODELS = [
+    "gemini-3.6-flash",
+    "gemini-flash-latest",
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
+]
+_REJECTED_GEMINI_MODELS: set = set()
+
+
+def _is_model_not_found(exc: Exception) -> bool:
+    """True when the API rejected the model itself rather than the request.
+
+    Matched on the message because the SDK surfaces this as several different
+    types depending on the transport (grpc._channel._InactiveRpcError,
+    google.api_core.exceptions.NotFound, a plain ValueError from the REST path).
+    """
+    text = str(exc).lower()
+    # grpc renders the status as "StatusCode.NOT_FOUND"; the REST path renders it
+    # as "404 ... is not found". Both spellings have to be accepted.
+    looks_missing = any(sig in text for sig in ("not_found", "not found", "404"))
+    about_the_model = any(
+        phrase in text for phrase in ("model", "no longer available", "not supported")
+    )
+    return looks_missing and about_the_model
+
 
 @dataclass
 class LLMResponse:
@@ -57,11 +85,7 @@ class GeminiClient(LLMClient):
         if _RESOLVED_GEMINI_MODEL:
             return _RESOLVED_GEMINI_MODEL
 
-        configured = self.model_name
-        if not configured or configured == "gemini-3.6-flash":
-            # "gemini-3.6-flash" was never a real model id; it shipped in the
-            # example env file and would 404 on every request.
-            configured = "gemini-2.0-flash"
+        configured = self.model_name or FALLBACK_GEMINI_MODELS[0]
 
         if not self.api_key or genai is None:
             return configured
@@ -74,26 +98,24 @@ class GeminiClient(LLMClient):
                 for m in models
                 if "generateContent" in getattr(m, "supported_generation_methods", [])
             ]
-            if configured in supported_names:
-                _RESOLVED_GEMINI_MODEL = configured
-                return _RESOLVED_GEMINI_MODEL
-            # Newest first. The 1.5 generation is retired for projects created
-            # after 2025, so it only sits at the end as a last resort.
-            for fallback in [
-                "gemini-2.0-flash",
-                "gemini-2.5-flash",
-                "gemini-flash-latest",
-                "gemini-2.5-pro",
-                "gemini-1.5-flash",
-            ]:
-                if fallback in supported_names:
-                    _RESOLVED_GEMINI_MODEL = fallback
+            for candidate in [configured, *FALLBACK_GEMINI_MODELS]:
+                if candidate in supported_names and candidate not in _REJECTED_GEMINI_MODELS:
+                    _RESOLVED_GEMINI_MODEL = candidate
                     return _RESOLVED_GEMINI_MODEL
-            if supported_names:
-                _RESOLVED_GEMINI_MODEL = supported_names[0]
+            usable = [n for n in supported_names if n not in _REJECTED_GEMINI_MODELS]
+            if usable:
+                _RESOLVED_GEMINI_MODEL = usable[0]
                 return _RESOLVED_GEMINI_MODEL
         except Exception as e:
             logger.warning(f"Failed to list Gemini models: {e}. Defaulting to '{configured}'")
+
+        # Listing failed, or returned nothing usable. Still skip anything already
+        # rejected, otherwise the retry loop in generate() would keep handing the
+        # same dead model back and burn its whole budget on one id.
+        for candidate in [configured, *FALLBACK_GEMINI_MODELS]:
+            if candidate not in _REJECTED_GEMINI_MODELS:
+                _RESOLVED_GEMINI_MODEL = candidate
+                return _RESOLVED_GEMINI_MODEL
 
         _RESOLVED_GEMINI_MODEL = configured
         return _RESOLVED_GEMINI_MODEL
@@ -106,23 +128,47 @@ class GeminiClient(LLMClient):
         tool_schemas: Optional[List[Dict[str, Any]]] = None,
         tool_executors: Optional[Dict[str, Callable]] = None,
     ) -> LLMResponse:
+        global _RESOLVED_GEMINI_MODEL
+
         if not self.api_key:
             raise ValueError("GEMINI_API_KEY is not set.")
         if genai is None:
             raise ImportError("google.generativeai module is not installed.")
 
-        active_model = self._resolve_model()
-        logger.info(f"[GEMINI] Calling model: {active_model}")
-
         genai.configure(api_key=self.api_key)
-        model = genai.GenerativeModel(
-            model_name=active_model,
-            tools=tools,
-            system_instruction=system_instruction,
-        )
 
-        chat = model.start_chat(enable_automatic_function_calling=True)
-        response = chat.send_message(user_message)
+        # Google retires models, and a retired one is still returned by
+        # list_models() — it only fails here, with NOT_FOUND. Because the
+        # resolved name is cached process-wide, one bad pick would otherwise
+        # break every request until a restart, so retire it and re-resolve.
+        chat = None
+        response = None
+        last_not_found: Optional[Exception] = None
+        for _ in range(len(FALLBACK_GEMINI_MODELS) + 1):
+            active_model = self._resolve_model()
+            logger.info(f"[GEMINI] Calling model: {active_model}")
+
+            model = genai.GenerativeModel(
+                model_name=active_model,
+                tools=tools,
+                system_instruction=system_instruction,
+            )
+            chat = model.start_chat(enable_automatic_function_calling=True)
+            try:
+                response = chat.send_message(user_message)
+                break
+            except Exception as exc:
+                if not _is_model_not_found(exc):
+                    raise
+                logger.warning(f"[GEMINI] Model '{active_model}' is unavailable; trying the next one. {exc}")
+                _REJECTED_GEMINI_MODELS.add(active_model)
+                _RESOLVED_GEMINI_MODEL = None
+                last_not_found = exc
+        else:
+            raise RuntimeError(
+                "No usable Gemini model: every candidate was rejected by the API. "
+                f"Set GEMINI_MODEL to a model your key can reach. Last error: {last_not_found}"
+            ) from last_not_found
         reply_text = response.text if hasattr(response, "text") and response.text else "I've processed your request."
 
         executed_actions: List[str] = []

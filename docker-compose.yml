@@ -76,7 +76,7 @@ services:
       - OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX:-8192}
       - OLLAMA_TIMEOUT=${OLLAMA_TIMEOUT:-300}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
-      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.0-flash}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-3.6-flash}
       - CORS_ORIGINS=["http://localhost:5173", "http://127.0.0.1:5173"]
     ports:
       - "8000:8000"

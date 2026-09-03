@@ -1,4 +1,5 @@
 import asyncio
+from types import SimpleNamespace
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -262,3 +263,118 @@ def test_ollama_client_reports_missing_model():
 
         with pytest.raises(RuntimeError, match="does not have the model"):
             client.generate(system_instruction="s", user_message="hi", tools=[])
+
+
+# ---------------------------------------------------------------------------
+# Gemini model resolution.
+#
+# Google retires models, and a retired one is still returned by list_models() —
+# it only fails at generate time. The detection below is string matching against
+# two different SDK transports, so it is worth pinning.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def reset_gemini_model_cache():
+    """The resolved name and the rejection set are process-wide globals."""
+    from app.services import llm_client as mod
+
+    mod._RESOLVED_GEMINI_MODEL = None
+    mod._REJECTED_GEMINI_MODELS.clear()
+    yield
+    mod._RESOLVED_GEMINI_MODEL = None
+    mod._REJECTED_GEMINI_MODELS.clear()
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        # grpc transport, which is what the google-generativeai SDK raises here.
+        'status = StatusCode.NOT_FOUND details = "This model models/gemini-2.5-flash is no '
+        'longer available to new users. Please update your code to use models/gemini-3.6-flash"',
+        # REST transport.
+        "404 models/gemini-1.5-flash is not found for API version v1beta, "
+        "or is not supported for generateContent.",
+    ],
+)
+def test_a_retired_model_error_is_recognised(message):
+    from app.services.llm_client import _is_model_not_found
+
+    assert _is_model_not_found(Exception(message)) is True
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "429 Resource has been exhausted (e.g. check quota).",
+        "403 Permission denied on resource project.",
+        "500 Internal error encountered.",
+        "Deadline exceeded",
+    ],
+)
+def test_other_errors_are_not_mistaken_for_a_retired_model(message):
+    """Misreading a quota error as a dead model would silently downgrade the model."""
+    from app.services.llm_client import _is_model_not_found
+
+    assert _is_model_not_found(Exception(message)) is False
+
+
+def _listed_model(name):
+    """A stand-in for a genai model entry.
+
+    SimpleNamespace rather than MagicMock on purpose: MagicMock treats `name` as
+    a constructor keyword for the mock itself, so `MagicMock(name="models/x").name`
+    is not "models/x" and the assertion would pass for the wrong reason.
+    """
+    return SimpleNamespace(name=name, supported_generation_methods=["generateContent"])
+
+
+def test_resolution_prefers_the_configured_model_when_the_key_can_reach_it():
+    from app.services.llm_client import GeminiClient
+
+    client = GeminiClient(api_key="test-key", model_name="gemini-3.6-flash")
+    with patch("app.services.llm_client.genai") as fake_genai:
+        fake_genai.list_models.return_value = [
+            _listed_model("models/gemini-3.6-flash"),
+            _listed_model("models/gemini-2.0-flash"),
+        ]
+        assert client._resolve_model() == "gemini-3.6-flash"
+
+
+def test_resolution_falls_back_when_the_configured_model_is_not_listed():
+    from app.services.llm_client import GeminiClient
+
+    client = GeminiClient(api_key="test-key", model_name="gemini-9.9-imaginary")
+    with patch("app.services.llm_client.genai") as fake_genai:
+        fake_genai.list_models.return_value = [_listed_model("models/gemini-2.0-flash")]
+        assert client._resolve_model() == "gemini-2.0-flash"
+
+
+def test_resolution_skips_a_model_already_rejected_by_the_api():
+    """After a NOT_FOUND the dead id must not be handed back again."""
+    from app.services import llm_client as mod
+
+    mod._REJECTED_GEMINI_MODELS.add("gemini-2.5-flash")
+    client = mod.GeminiClient(api_key="test-key", model_name="gemini-2.5-flash")
+
+    with patch("app.services.llm_client.genai") as fake_genai:
+        fake_genai.list_models.return_value = [
+            _listed_model("models/gemini-2.5-flash"),
+            _listed_model("models/gemini-3.6-flash"),
+        ]
+        assert client._resolve_model() == "gemini-3.6-flash"
+
+
+def test_resolution_still_makes_progress_when_listing_fails():
+    """A rejected model plus an unreachable list_models must not deadlock on one id."""
+    from app.services import llm_client as mod
+
+    mod._REJECTED_GEMINI_MODELS.add("gemini-3.6-flash")
+    client = mod.GeminiClient(api_key="test-key", model_name="gemini-3.6-flash")
+
+    with patch("app.services.llm_client.genai") as fake_genai:
+        fake_genai.list_models.side_effect = RuntimeError("network down")
+        resolved = client._resolve_model()
+
+    assert resolved != "gemini-3.6-flash"
+    assert resolved in mod.FALLBACK_GEMINI_MODELS

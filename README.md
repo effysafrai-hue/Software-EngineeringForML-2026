@@ -89,7 +89,7 @@ Set `GEMINI_API_KEY` in `.env` and start normally — no model download, no loca
 | :--- | :--- | :--- |
 | `LLM_PROVIDER` | `gemini` | `gemini` or `ollama` |
 | `GEMINI_API_KEY` | *(none)* | Required. Without it every chat request returns HTTP 503 |
-| `GEMINI_MODEL` | `gemini-2.0-flash` | Chosen for free-tier request rate and latency. `gemini-2.5-flash` follows the disambiguation rules more closely at half the requests per minute. Unavailable ids fall back to whatever the key can actually reach |
+| `GEMINI_MODEL` | `gemini-3.6-flash` | The current flash model. Older ids (2.5, 2.0, 1.5) are being closed to new projects and answer `NOT_FOUND` at call time even though `list_models()` still lists them — the client detects that, retires the id for the process, and walks back through `FALLBACK_GEMINI_MODELS` |
 
 ### Ollama (local fallback)
 
