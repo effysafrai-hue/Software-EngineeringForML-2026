@@ -1,9 +1,16 @@
+import os
 import pytest
 from datetime import datetime, timezone, timedelta
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
+
+# Chat tests exercise the real Ollama tool-calling path. The first call also
+# pays for loading the model, and a reschedule costs three round-trips
+# (list_events, update_event, final answer). Override per-run with
+# OLLAMA_TIMEOUT if your host is slower or faster.
+os.environ.setdefault("OLLAMA_TIMEOUT", "300.0")
 
 from app.main import app
 from app.db.session import Base, get_db

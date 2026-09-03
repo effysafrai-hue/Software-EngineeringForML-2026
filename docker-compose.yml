@@ -39,8 +39,9 @@ services:
     container_name: se_ml_effy_ollama_pull
     environment:
       - OLLAMA_HOST=http://ollama:11434
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.1:8b}
     entrypoint: >
-      sh -c "ollama pull llama3.1:8b"
+      sh -c "ollama pull $${OLLAMA_MODEL}"
     depends_on:
       ollama:
         condition: service_healthy
@@ -59,8 +60,10 @@ services:
       - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://ollama:11434}
       - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.1:8b}
+      - OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX:-8192}
+      - OLLAMA_TIMEOUT=${OLLAMA_TIMEOUT:-300}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
-      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-3.6-flash}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-1.5-flash}
       - CORS_ORIGINS=["http://localhost:5173", "http://127.0.0.1:5173"]
     ports:
       - "8000:8000"
@@ -69,6 +72,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      # The chat path has no offline fallback, so the backend must not start
+      # answering until the model is actually on disk.
+      ollama-pull:
+        condition: service_completed_successfully
 
   frontend:
     build:

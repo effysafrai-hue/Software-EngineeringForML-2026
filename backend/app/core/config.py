@@ -19,9 +19,20 @@ class Settings(BaseSettings):
     LLM_PROVIDER: str = "ollama"  # "ollama" | "gemini"
     OLLAMA_BASE_URL: str = "http://ollama:11434"
     OLLAMA_MODEL: str = "llama3.1:8b"
+    # A cold 8B model has to load before it answers, and a reschedule costs
+    # several round-trips (list_events -> update_event -> final answer).
+    OLLAMA_TIMEOUT: float = 300.0
+    # The agent prompt plus course grounding plus tool schemas exceeds Ollama's
+    # 4096-token default, and an over-long prompt is truncated silently.
+    OLLAMA_NUM_CTX: int = 8192
+    OLLAMA_NUM_PREDICT: int = 800
+    # Greedy decoding: scheduling is extraction, not creative writing.
+    OLLAMA_TEMPERATURE: float = 0.0
+    OLLAMA_MAX_TOOL_TURNS: int = 4
+    OLLAMA_KEEP_ALIVE: str = "24h"
 
     GEMINI_API_KEY: str = ""
-    GEMINI_MODEL: str = "gemini-3.6-flash"
+    GEMINI_MODEL: str = "gemini-1.5-flash"
 
     model_config = SettingsConfigDict(
         env_file=".env",

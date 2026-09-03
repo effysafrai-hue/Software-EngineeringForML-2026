@@ -1,5 +1,4 @@
 import io
-# pyrefly: ignore [missing-import]
 import pytest
 from app.models.forum import Post, Comment
 

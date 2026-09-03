@@ -45,9 +45,32 @@ def compute_embedding(text: str) -> List[float]:
     return vector
 
 
+# Short words that read as a course-code prefix but are ordinary English, e.g.
+# the "for 45" in "... consultation for 45 minutes". Without this filter any
+# short word followed by a 2-4 digit number looks like a course code.
+_NON_COURSE_PREFIXES = {
+    "am", "pm", "at", "by", "in", "of", "on", "to", "up", "or", "no", "be",
+    "do", "is", "it", "an", "the", "and", "off", "per", "was", "all", "add",
+    "for", "from", "with", "have", "has", "get", "got", "next", "last",
+    "past", "till", "only", "over", "just", "take", "about", "after",
+    "room", "floor", "level", "page", "unit", "step", "day", "days",
+}
+
+_COURSE_CODE_RE = re.compile(r"\b([a-zA-Z]{2,5})\s?(\d{2,4}[a-zA-Z]?)\b")
+
+
+def extract_course_codes(message: str) -> List[tuple]:
+    """Return (prefix, number) pairs from the message that plausibly name a course."""
+    return [
+        (prefix, number)
+        for prefix, number in _COURSE_CODE_RE.findall(message)
+        if prefix.lower() not in _NON_COURSE_PREFIXES
+    ]
+
+
 def detect_course_query(message: str) -> bool:
     msg = message.lower()
-    if re.search(r"\b[a-z]{2,5}\s?\d{2,4}[a-z]?\b", msg):
+    if extract_course_codes(msg):
         return True
 
     keywords = [
@@ -84,7 +107,7 @@ def retrieve_relevant_courses(
     seen_ids = set()
 
     # Step 1: Extract and match explicit course codes
-    code_matches = re.findall(r"\b([a-zA-Z]{2,5})\s?(\d{2,4}[a-zA-Z]?)\b", query)
+    code_matches = extract_course_codes(query)
     for prefix, number in code_matches:
         candidate_code = f"{prefix.upper()}{number.upper()}"
         course = db.query(Course).filter(Course.code.ilike(candidate_code)).first()

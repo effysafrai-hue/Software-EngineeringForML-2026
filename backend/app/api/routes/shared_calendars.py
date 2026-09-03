@@ -21,7 +21,7 @@ from app.schemas.shared_calendar import (
     SharedMemoryCreate,
     SharedMemoryResponse,
 )
-from app.services.ai_agent import process_chat
+from app.services.ai_agent import LLMUnavailableError, process_chat
 from app.services.chat_queue import chat_queue, Priority
 
 router = APIRouter(prefix="/shared-calendars", tags=["Shared Calendars"])
@@ -352,13 +352,19 @@ async def send_shared_chat_message(
     if memory_context:
         enriched_prompt = f"{chat_req.message}\n{memory_context}"
 
-    ai_result = await chat_queue.submit(
-        Priority.SHARED_CALENDAR_CHAT,
-        process_chat,
-        message=enriched_prompt,
-        user_id=current_user.id,
-        db=db,
-    )
+    try:
+        ai_result = await chat_queue.submit(
+            Priority.SHARED_CALENDAR_CHAT,
+            process_chat,
+            message=enriched_prompt,
+            user_id=current_user.id,
+            db=db,
+        )
+    except LLMUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"The AI assistant is currently unavailable: {exc}",
+        )
 
     # If an event was created, associate it with the shared calendar
     if ai_result.get("action_taken") == "create_event":
