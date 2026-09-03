@@ -159,10 +159,14 @@ def test_shared_events_crud_by_any_member(client, auth_headers_user_a, auth_head
     assert len(final_list.json()) == 0
 
 
+@pytest.mark.live_llm
 def test_shared_memory_created_via_chat_visible_to_other_member(client, auth_headers_user_a, auth_headers_user_b):
     """
     Test that a shared memory/preference created via shared chat by User A
     is persisted and visible to User B of the same shared calendar.
+
+    Calls the real model, so it is excluded from the default run. The same
+    behaviour is asserted deterministically in the stubbed tests below.
     """
     # 1. User A creates calendar and adds User B
     cal_res = client.post(
@@ -200,3 +204,180 @@ def test_shared_memory_created_via_chat_visible_to_other_member(client, auth_hea
     assert len(history) >= 2
     assert history[0]["role"] == "user"
     assert "meets tuesdays" in history[0]["content"].lower()
+
+
+# ---------------------------------------------------------------------------
+# Requirements 4.3 / 4.4 / 4.5, asserted without the model.
+#
+# The memory extraction and the shared-chat bookkeeping around the AI call are
+# ordinary deterministic code, so they belong in the default suite. Only the
+# model's own judgement needs a live run.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def stub_shared_llm(monkeypatch):
+    """Canned assistant reply, recording the prompt the route assembled."""
+    seen = []
+
+    def fake_process_chat(message, user_id, db, reference_time=None):
+        seen.append(message)
+        return {"reply": "Understood, noted for the group.", "action_taken": None}
+
+    monkeypatch.setattr("app.api.routes.shared_calendars.process_chat", fake_process_chat)
+    return seen
+
+
+def _calendar_with_both_members(client, auth_headers_user_a, name="Study Group"):
+    cal_id = client.post("/shared-calendars", json={"name": name}, headers=auth_headers_user_a).json()["id"]
+    client.post(
+        f"/shared-calendars/{cal_id}/members",
+        json={"email": "user_b@example.com"},
+        headers=auth_headers_user_a,
+    )
+    return cal_id
+
+
+def test_shared_memory_is_extracted_and_visible_to_the_other_member(
+    client, auth_headers_user_a, auth_headers_user_b, stub_shared_llm
+):
+    """Requirement 4.4 — the shared calendar keeps its own long-term memory."""
+    cal_id = _calendar_with_both_members(client, auth_headers_user_a)
+
+    res = client.post(
+        f"/shared-calendars/{cal_id}/chat",
+        json={"message": "Remember that this group meets Tuesdays, avoid scheduling then"},
+        headers=auth_headers_user_a,
+    )
+    assert res.status_code == 200
+
+    memories = client.get(f"/shared-calendars/{cal_id}/memories", headers=auth_headers_user_b).json()
+    assert len(memories) == 1
+    # The "Remember that" prefix is stripped before storing.
+    assert memories[0]["content"].lower().startswith("this group meets tuesdays")
+
+
+def test_stored_memory_is_fed_back_into_the_next_prompt(
+    client, auth_headers_user_a, stub_shared_llm
+):
+    """Requirement 4.4 — the memory must actually reach the model, not just sit in a table."""
+    cal_id = _calendar_with_both_members(client, auth_headers_user_a)
+
+    client.post(
+        f"/shared-calendars/{cal_id}/chat",
+        json={"message": "Remember that this group meets Tuesdays, avoid scheduling then"},
+        headers=auth_headers_user_a,
+    )
+    client.post(
+        f"/shared-calendars/{cal_id}/chat",
+        json={"message": "When should we do the review?"},
+        headers=auth_headers_user_a,
+    )
+
+    second_prompt = stub_shared_llm[1]
+    assert "When should we do the review?" in second_prompt
+    assert "SHARED GROUP MEMORIES" in second_prompt
+    assert "meets Tuesdays" in second_prompt
+
+
+def test_ordinary_chat_does_not_create_a_memory(client, auth_headers_user_a, stub_shared_llm):
+    """Only preference-shaped messages become durable group rules."""
+    cal_id = _calendar_with_both_members(client, auth_headers_user_a)
+
+    client.post(
+        f"/shared-calendars/{cal_id}/chat",
+        json={"message": "What time is the lecture?"},
+        headers=auth_headers_user_a,
+    )
+
+    assert client.get(f"/shared-calendars/{cal_id}/memories", headers=auth_headers_user_a).json() == []
+
+
+def test_shared_chat_history_is_shared_between_members(
+    client, auth_headers_user_a, auth_headers_user_b, stub_shared_llm
+):
+    """Requirement 4.5 — the chat itself is shared, not per-user."""
+    cal_id = _calendar_with_both_members(client, auth_headers_user_a)
+
+    client.post(
+        f"/shared-calendars/{cal_id}/chat",
+        json={"message": "A asks the group something"},
+        headers=auth_headers_user_a,
+    )
+    client.post(
+        f"/shared-calendars/{cal_id}/chat",
+        json={"message": "B answers in the same thread"},
+        headers=auth_headers_user_b,
+    )
+
+    for headers in (auth_headers_user_a, auth_headers_user_b):
+        history = client.get(f"/shared-calendars/{cal_id}/chat/history", headers=headers).json()
+        assert [m["content"] for m in history] == [
+            "A asks the group something",
+            "Understood, noted for the group.",
+            "B answers in the same thread",
+            "Understood, noted for the group.",
+        ]
+
+
+def test_shared_chat_stays_out_of_the_personal_chat_history(
+    client, auth_headers_user_a, stub_shared_llm
+):
+    """A group conversation must not leak into the user's private /chat/history."""
+    cal_id = _calendar_with_both_members(client, auth_headers_user_a)
+    client.post(
+        f"/shared-calendars/{cal_id}/chat",
+        json={"message": "Group-only planning message"},
+        headers=auth_headers_user_a,
+    )
+
+    personal = client.get("/chat/history", headers=auth_headers_user_a)
+    assert personal.status_code == 200
+    assert personal.json() == []
+
+
+def test_an_event_created_through_shared_chat_lands_on_the_shared_calendar(
+    client, auth_headers_user_a, auth_headers_user_b, monkeypatch, db_session
+):
+    """Requirement 4.3 — a user's own chat can add tasks to the shared calendar."""
+    cal_id = _calendar_with_both_members(client, auth_headers_user_a)
+
+    def fake_process_chat(message, user_id, db, reference_time=None):
+        # Stand in for the model's create_event tool call.
+        start = datetime(2026, 7, 2, 9, 0, 0, tzinfo=timezone.utc)
+        db.add(Event(user_id=user_id, title="Group revision session", start_time=start, end_time=start + timedelta(hours=1)))
+        db.commit()
+        return {"reply": "Added it to the group calendar.", "action_taken": "create_event"}
+
+    monkeypatch.setattr("app.api.routes.shared_calendars.process_chat", fake_process_chat)
+
+    res = client.post(
+        f"/shared-calendars/{cal_id}/chat",
+        json={"message": "Book a group revision session on Thursday morning"},
+        headers=auth_headers_user_a,
+    )
+    assert res.status_code == 200
+    assert res.json()["action_taken"] == "create_event"
+
+    # Requirement 4.2 — the other member sees it.
+    events_b = client.get(f"/shared-calendars/{cal_id}/events", headers=auth_headers_user_b).json()
+    assert [e["title"] for e in events_b] == ["Group revision session"]
+
+    event = db_session.query(Event).filter(Event.title == "Group revision session").first()
+    assert event.shared_calendar_id == cal_id
+
+
+def test_shared_chat_reports_an_unavailable_model_as_503(client, auth_headers_user_a, monkeypatch):
+    from app.services.ai_agent import LLMUnavailableError
+
+    cal_id = _calendar_with_both_members(client, auth_headers_user_a)
+
+    def broken(message, user_id, db, reference_time=None):
+        raise LLMUnavailableError("model is not reachable")
+
+    monkeypatch.setattr("app.api.routes.shared_calendars.process_chat", broken)
+
+    res = client.post(
+        f"/shared-calendars/{cal_id}/chat", json={"message": "Hello"}, headers=auth_headers_user_a
+    )
+    assert res.status_code == 503
