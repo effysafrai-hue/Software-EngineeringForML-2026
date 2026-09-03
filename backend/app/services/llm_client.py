@@ -59,7 +59,9 @@ class GeminiClient(LLMClient):
 
         configured = self.model_name
         if not configured or configured == "gemini-3.6-flash":
-            configured = "gemini-1.5-flash"
+            # "gemini-3.6-flash" was never a real model id; it shipped in the
+            # example env file and would 404 on every request.
+            configured = "gemini-2.0-flash"
 
         if not self.api_key or genai is None:
             return configured
@@ -75,7 +77,15 @@ class GeminiClient(LLMClient):
             if configured in supported_names:
                 _RESOLVED_GEMINI_MODEL = configured
                 return _RESOLVED_GEMINI_MODEL
-            for fallback in ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash", "gemini-1.0-pro"]:
+            # Newest first. The 1.5 generation is retired for projects created
+            # after 2025, so it only sits at the end as a last resort.
+            for fallback in [
+                "gemini-2.0-flash",
+                "gemini-2.5-flash",
+                "gemini-flash-latest",
+                "gemini-2.5-pro",
+                "gemini-1.5-flash",
+            ]:
                 if fallback in supported_names:
                     _RESOLVED_GEMINI_MODEL = fallback
                     return _RESOLVED_GEMINI_MODEL
@@ -321,11 +331,11 @@ class OllamaClient(LLMClient):
 
 
 def get_llm_client() -> LLMClient:
-    provider = (settings.LLM_PROVIDER or "ollama").strip().lower()
+    provider = (settings.LLM_PROVIDER or "gemini").strip().lower()
     if provider == "gemini":
         return GeminiClient()
     elif provider == "ollama":
         return OllamaClient()
     else:
-        logger.warning(f"Unknown LLM_PROVIDER '{provider}'. Defaulting to OllamaClient.")
-        return OllamaClient()
+        logger.warning(f"Unknown LLM_PROVIDER '{provider}'. Defaulting to GeminiClient.")
+        return GeminiClient()

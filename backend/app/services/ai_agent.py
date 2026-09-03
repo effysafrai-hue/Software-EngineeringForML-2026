@@ -404,7 +404,7 @@ def process_chat(
     reference_time: Optional[datetime] = None,
 ) -> Dict[str, Any]:
     ref_time = reference_time or datetime.now(timezone.utc)
-    provider = (settings.LLM_PROVIDER or "ollama").strip().lower()
+    provider = (settings.LLM_PROVIDER or "gemini").strip().lower()
 
     grounding_info = retrieve_relevant_courses(message, db)
     grounding_context_str = grounding_info.get("grounding_text", "")

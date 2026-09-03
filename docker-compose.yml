@@ -17,7 +17,11 @@ services:
       timeout: 5s
       retries: 5
 
+  # Local-LLM fallback, off by default. The default provider is Gemini, and an
+  # idle 8B runner would hold several GB of the Docker VM for nothing.
+  # Start it with: docker compose --profile ollama up -d
   ollama:
+    profiles: ["ollama"]
     image: ollama/ollama:latest
     container_name: se_ml_effy_ollama
     restart: unless-stopped
@@ -43,6 +47,7 @@ services:
       start_period: 5s
 
   ollama-pull:
+    profiles: ["ollama"]
     image: ollama/ollama:latest
     container_name: se_ml_effy_ollama_pull
     environment:
@@ -65,13 +70,13 @@ services:
     environment:
       - DATABASE_URL=${DATABASE_URL:-postgresql+psycopg://postgres:postgres@postgres:5432/se_ml_effy}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:-se_ml_effy_super_secret_jwt_key_change_in_production_32bytes}
-      - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
+      - LLM_PROVIDER=${LLM_PROVIDER:-gemini}
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://ollama:11434}
       - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.1:8b}
       - OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX:-8192}
       - OLLAMA_TIMEOUT=${OLLAMA_TIMEOUT:-300}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
-      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-1.5-flash}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.0-flash}
       - CORS_ORIGINS=["http://localhost:5173", "http://127.0.0.1:5173"]
     ports:
       - "8000:8000"
@@ -80,10 +85,11 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      # The chat path has no offline fallback, so the backend must not start
-      # answering until the model is actually on disk.
-      ollama-pull:
-        condition: service_completed_successfully
+      # ollama-pull is deliberately NOT a dependency: it lives behind the
+      # "ollama" profile, and Compose refuses to start a service that depends on
+      # one whose profile is inactive. With LLM_PROVIDER=ollama the backend can
+      # therefore come up before the model finishes downloading, and chat
+      # returns HTTP 503 until it does. Watch `docker compose logs -f ollama-pull`.
 
   frontend:
     build:

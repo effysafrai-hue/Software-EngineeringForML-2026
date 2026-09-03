@@ -15,8 +15,12 @@ class Settings(BaseSettings):
     RATE_LIMIT_LOGIN: str = "5/minute"
     RATE_LIMIT_SIGNUP: str = "5/minute"
 
-    # LLM Provider Configuration
-    LLM_PROVIDER: str = "ollama"  # "ollama" | "gemini"
+    # LLM Provider Configuration.
+    # Gemini is the default: the agent needs an 8B-class tool-calling model, and
+    # running one locally costs ~5GB of RAM that a containerised dev box does not
+    # reliably have (the llama-server runner gets OOM-killed mid-generation).
+    # Ollama is kept as a fully supported fallback — set LLM_PROVIDER=ollama.
+    LLM_PROVIDER: str = "gemini"  # "gemini" | "ollama"
     OLLAMA_BASE_URL: str = "http://ollama:11434"
     OLLAMA_MODEL: str = "llama3.1:8b"
     # A cold 8B model has to load before it answers, and a reschedule costs
@@ -32,7 +36,11 @@ class Settings(BaseSettings):
     OLLAMA_KEEP_ALIVE: str = "24h"
 
     GEMINI_API_KEY: str = ""
-    GEMINI_MODEL: str = "gemini-1.5-flash"
+    # gemini-2.0-flash is picked over 2.5-flash for a higher free-tier request
+    # rate and lower latency; the whole suite is short extraction calls. If the
+    # disambiguation tests come out flaky, gemini-2.5-flash follows the prompt's
+    # "ask, don't guess" rules more closely at half the requests per minute.
+    GEMINI_MODEL: str = "gemini-2.0-flash"
 
     model_config = SettingsConfigDict(
         env_file=".env",
