@@ -27,6 +27,14 @@ services:
       - ollama_data:/root/.ollama
     environment:
       - OLLAMA_KEEP_ALIVE=24h
+      # Ollama sizes the llama-server KV cache as num_ctx * NUM_PARALLEL. Left on
+      # "auto" it picks up to 4 slots, so the 8192-token context the agent prompt
+      # needs turns into 32k worth of cache and the runner gets OOM-killed
+      # ("llama-server process has terminated: signal: killed"). Requests are
+      # serialised by the backend's chat queue anyway, so one slot is enough.
+      - OLLAMA_NUM_PARALLEL=1
+      - OLLAMA_MAX_LOADED_MODELS=1
+      - OLLAMA_CONTEXT_LENGTH=${OLLAMA_NUM_CTX:-8192}
     healthcheck:
       test: ["CMD", "ollama", "list"]
       interval: 5s
