@@ -193,3 +193,72 @@ def test_commenting_notifies_the_post_author_only(client, auth_headers_user_a, a
         headers=auth_headers_user_a,
     )
     assert db_session.query(Notification).filter(Notification.user_id == 1).count() == 1
+
+
+def test_liking_a_post_notifies_the_author(client, auth_headers_user_a, auth_headers_user_b, db_session):
+    """Requirement 6.6 — the author is told when someone likes their post."""
+    post_id = _create_post(client, auth_headers_user_a, title="Exam tips thread")
+    client.put(f"/posts/{post_id}/reactions", json={"value": "like"}, headers=auth_headers_user_b)
+
+    notes = db_session.query(Notification).filter(Notification.user_id == 1).all()
+    assert len(notes) == 1
+    assert "liked" in notes[0].message
+    assert "Exam tips thread" in notes[0].message
+    # Never attributable: naming the reactor would out them.
+    assert "user_b" not in notes[0].message
+
+
+def test_disliking_a_post_notifies_the_author(client, auth_headers_user_a, auth_headers_user_b, db_session):
+    """Requirement 6.6 — dislikes notify too, not just likes."""
+    post_id = _create_post(client, auth_headers_user_a, title="Unpopular opinion")
+    client.put(f"/posts/{post_id}/reactions", json={"value": "dislike"}, headers=auth_headers_user_b)
+
+    notes = db_session.query(Notification).filter(Notification.user_id == 1).all()
+    assert len(notes) == 1
+    assert "disliked" in notes[0].message
+
+
+def test_reacting_to_a_comment_notifies_the_comment_author(
+    client, auth_headers_user_a, auth_headers_user_b, auth_headers_user_c, db_session
+):
+    """Requirement 6.6 — comment likes/dislikes notify the commenter, not the post author."""
+    post_id = _create_post(client, auth_headers_user_a, title="Open question")
+    comment_id = client.post(
+        f"/posts/{post_id}/comments",
+        json={"body": "Here is how I solved it.", "anonymous": False},
+        headers=auth_headers_user_b,
+    ).json()["id"]
+
+    # Clear the "new comment" notification the post author just received, so the
+    # counts below are unambiguous.
+    db_session.query(Notification).delete()
+    db_session.commit()
+
+    client.put(f"/comments/{comment_id}/reactions", json={"value": "like"}, headers=auth_headers_user_c)
+
+    for_commenter = db_session.query(Notification).filter(Notification.user_id == 2).all()
+    assert len(for_commenter) == 1
+    assert "liked your comment" in for_commenter[0].message
+    # The post's author is not involved in a reaction to someone else's comment.
+    assert db_session.query(Notification).filter(Notification.user_id == 1).count() == 0
+
+
+def test_repeating_a_reaction_does_not_re_notify(
+    client, auth_headers_user_a, auth_headers_user_b, db_session
+):
+    """A double-tapped button must not spam the author's notification list."""
+    post_id = _create_post(client, auth_headers_user_a)
+    for _ in range(3):
+        client.put(f"/posts/{post_id}/reactions", json={"value": "like"}, headers=auth_headers_user_b)
+
+    assert db_session.query(Notification).filter(Notification.user_id == 1).count() == 1
+
+
+def test_clearing_a_reaction_does_not_notify(client, auth_headers_user_a, auth_headers_user_b, db_session):
+    post_id = _create_post(client, auth_headers_user_a)
+    client.put(f"/posts/{post_id}/reactions", json={"value": "like"}, headers=auth_headers_user_b)
+    db_session.query(Notification).delete()
+    db_session.commit()
+
+    client.delete(f"/posts/{post_id}/reactions", headers=auth_headers_user_b)
+    assert db_session.query(Notification).count() == 0

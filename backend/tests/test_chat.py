@@ -102,6 +102,90 @@ def test_intent_query_calendar_agenda(client, auth_headers_user_a, db_session):
     assert "sprint planning" in res["reply"].lower()
 
 
+def test_intent_query_today_agenda(client, auth_headers_user_a, db_session):
+    """Requirement 1.3 — 'What do I need to do today?' summarises today only."""
+    user_id = 1
+    db_session.add_all([
+        Event(
+            user_id=user_id,
+            title="Statistics lecture",
+            description="Hall B",
+            start_time=datetime(2026, 6, 10, 14, 0, 0, tzinfo=timezone.utc),
+            end_time=datetime(2026, 6, 10, 16, 0, 0, tzinfo=timezone.utc),
+        ),
+        Event(
+            user_id=user_id,
+            title="Dentist appointment",
+            description="Far away in the future",
+            start_time=datetime(2026, 6, 20, 9, 0, 0, tzinfo=timezone.utc),
+            end_time=datetime(2026, 6, 20, 10, 0, 0, tzinfo=timezone.utc),
+        ),
+    ])
+    db_session.commit()
+
+    res = process_chat("What do I need to do today?", user_id=user_id, db=db_session, reference_time=MOCK_NOW)
+    assert res["action_taken"] == "list_events"
+
+    reply_lower = res["reply"].lower()
+    assert "statistics" in reply_lower
+    # The 20th is not today; summarising it would be a wrong answer, not a fuller one.
+    assert "dentist" not in reply_lower
+
+
+def test_intent_query_this_week_agenda(client, auth_headers_user_a, db_session):
+    """Requirement 1.3 — 'What do I need to do this week?' summarises the week."""
+    user_id = 1
+    db_session.add_all([
+        Event(
+            user_id=user_id,
+            title="Group project sync",
+            description="Zoom",
+            start_time=datetime(2026, 6, 11, 11, 0, 0, tzinfo=timezone.utc),
+            end_time=datetime(2026, 6, 11, 12, 0, 0, tzinfo=timezone.utc),
+        ),
+        Event(
+            user_id=user_id,
+            title="Physics lab report",
+            description="Submit online",
+            start_time=datetime(2026, 6, 13, 17, 0, 0, tzinfo=timezone.utc),
+            end_time=datetime(2026, 6, 13, 18, 0, 0, tzinfo=timezone.utc),
+        ),
+    ])
+    db_session.commit()
+
+    res = process_chat("What do I need to do this week?", user_id=user_id, db=db_session, reference_time=MOCK_NOW)
+    assert res["action_taken"] == "list_events"
+
+    reply_lower = res["reply"].lower()
+    assert "group project" in reply_lower or "sync" in reply_lower
+    assert "physics" in reply_lower or "lab report" in reply_lower
+
+
+def test_agenda_query_only_sees_your_own_events(client, auth_headers_user_a, db_session):
+    """A summary must never pull in another user's calendar."""
+    db_session.add_all([
+        Event(
+            user_id=1,
+            title="My own seminar",
+            start_time=datetime(2026, 6, 11, 10, 0, 0, tzinfo=timezone.utc),
+            end_time=datetime(2026, 6, 11, 11, 0, 0, tzinfo=timezone.utc),
+        ),
+        Event(
+            user_id=2,
+            title="Somebody elses therapy session",
+            start_time=datetime(2026, 6, 11, 12, 0, 0, tzinfo=timezone.utc),
+            end_time=datetime(2026, 6, 11, 13, 0, 0, tzinfo=timezone.utc),
+        ),
+    ])
+    db_session.commit()
+
+    res = process_chat("What is on my calendar tomorrow?", user_id=1, db=db_session, reference_time=MOCK_NOW)
+    reply_lower = res["reply"].lower()
+
+    assert "seminar" in reply_lower
+    assert "therapy" not in reply_lower
+
+
 def test_disambiguation_course_inquiry_not_scheduling(client, auth_headers_user_a, db_session):
     prompt = "I'm taking CS101 this semester, what are the main topics we will learn?"
     user_id = 1

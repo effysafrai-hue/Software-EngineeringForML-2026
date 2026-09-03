@@ -96,6 +96,15 @@ def test_non_member_gets_403_forbidden(client, auth_headers_user_a, auth_headers
     )
     assert res_chat.status_code == 403
 
+    # User C tries to read the shared chat history -> 403
+    res_hist = client.get(f"/shared-calendars/{cal_id}/chat/history", headers=auth_headers_user_c)
+    assert res_hist.status_code == 403
+
+    # And the calendar never shows up in their own list.
+    res_list = client.get("/shared-calendars", headers=auth_headers_user_c)
+    assert res_list.status_code == 200
+    assert all(c["id"] != cal_id for c in res_list.json())
+
 
 def test_shared_events_crud_by_any_member(client, auth_headers_user_a, auth_headers_user_b):
     """Test that any member of a shared calendar can create, update, and delete shared events."""

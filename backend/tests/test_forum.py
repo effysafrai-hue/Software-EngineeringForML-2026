@@ -147,3 +147,140 @@ def test_delete_post_author_vs_non_author(client, auth_headers_user_a, auth_head
     # Now post is gone -> 404
     get_res = client.get(f"/posts/{post_id}", headers=auth_headers_user_a)
     assert get_res.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Requirements 6.1 / 6.3 / 6.5 — video attachments, comment media, comment
+# deletion and feed search, none of which were covered.
+# ---------------------------------------------------------------------------
+
+
+def _upload(client, headers, name, data, content_type):
+    res = client.post("/uploads", files={"file": (name, io.BytesIO(data), content_type)}, headers=headers)
+    assert res.status_code == 201, res.text
+    return res.json()
+
+
+def test_file_upload_valid_video(client, auth_headers_user_a):
+    """Videos are an explicit requirement, and they take a different size cap."""
+    fake_mp4 = b"\x00\x00\x00\x20ftypisom" + b"fakevideobytes"
+    data = _upload(client, auth_headers_user_a, "lecture.mp4", fake_mp4, "video/mp4")
+
+    assert data["category"] == "video"
+    assert data["content_type"] == "video/mp4"
+    assert data["url"].startswith("/uploads/")
+    assert data["url"].endswith(".mp4")
+
+
+def test_post_can_carry_an_image_and_a_video(client, auth_headers_user_a):
+    image = _upload(client, auth_headers_user_a, "d.png", b"\x89PNG\r\n\x1a\nx", "image/png")["url"]
+    video = _upload(client, auth_headers_user_a, "c.webm", b"\x1a\x45\xdf\xa3x", "video/webm")["url"]
+
+    res = client.post(
+        "/posts",
+        json={
+            "title": "Project demo",
+            "body": "Screenshot and a clip.",
+            "media_urls": [image, video],
+            "anonymous": False,
+        },
+        headers=auth_headers_user_a,
+    )
+    assert res.status_code == 201
+    assert res.json()["media_urls"] == [image, video]
+
+    detail = client.get(f"/posts/{res.json()['id']}", headers=auth_headers_user_a).json()
+    assert detail["media_urls"] == [image, video]
+
+
+def test_comment_can_carry_media(client, auth_headers_user_a, auth_headers_user_b):
+    post_id = client.post(
+        "/posts", json={"title": "Show your setup", "body": "Post a photo", "anonymous": False},
+        headers=auth_headers_user_a,
+    ).json()["id"]
+    image = _upload(client, auth_headers_user_b, "setup.jpg", b"\xff\xd8\xffx", "image/jpeg")["url"]
+
+    res = client.post(
+        f"/posts/{post_id}/comments",
+        json={"body": "Here's mine", "media_urls": [image], "anonymous": False},
+        headers=auth_headers_user_b,
+    )
+    assert res.status_code == 201
+    assert res.json()["media_urls"] == [image]
+
+
+def test_delete_comment_author_vs_non_author(client, auth_headers_user_a, auth_headers_user_b):
+    """Only the comment's author may remove it — the post's author may not."""
+    post_id = client.post(
+        "/posts", json={"title": "Thread", "body": "Discuss", "anonymous": False},
+        headers=auth_headers_user_a,
+    ).json()["id"]
+    comment_id = client.post(
+        f"/posts/{post_id}/comments",
+        json={"body": "B's comment", "anonymous": False},
+        headers=auth_headers_user_b,
+    ).json()["id"]
+
+    # The post owner is still not the comment's author.
+    assert client.delete(f"/comments/{comment_id}", headers=auth_headers_user_a).status_code == 403
+    assert client.delete(f"/comments/{comment_id}", headers=auth_headers_user_b).status_code == 204
+
+    detail = client.get(f"/posts/{post_id}", headers=auth_headers_user_a).json()
+    assert detail["comments"] == []
+    assert detail["comment_count"] == 0
+
+
+def test_deleting_a_missing_comment_is_404(client, auth_headers_user_a):
+    assert client.delete("/comments/99999", headers=auth_headers_user_a).status_code == 404
+
+
+def test_deleting_a_post_removes_its_comments(client, auth_headers_user_a, auth_headers_user_b, db_session):
+    post_id = client.post(
+        "/posts", json={"title": "Temporary", "body": "Gone soon", "anonymous": False},
+        headers=auth_headers_user_a,
+    ).json()["id"]
+    client.post(
+        f"/posts/{post_id}/comments", json={"body": "A reply", "anonymous": False},
+        headers=auth_headers_user_b,
+    )
+
+    assert client.delete(f"/posts/{post_id}", headers=auth_headers_user_a).status_code == 204
+    assert db_session.query(Comment).filter(Comment.post_id == post_id).count() == 0
+
+
+def test_feed_search_matches_title_and_body(client, auth_headers_user_a):
+    client.post(
+        "/posts", json={"title": "Linear algebra help", "body": "Struggling with matrices", "anonymous": False},
+        headers=auth_headers_user_a,
+    )
+    client.post(
+        "/posts", json={"title": "Cafeteria hours", "body": "Closes at seven", "anonymous": False},
+        headers=auth_headers_user_a,
+    )
+
+    by_title = client.get("/posts?search=algebra", headers=auth_headers_user_a).json()
+    assert [p["title"] for p in by_title] == ["Linear algebra help"]
+
+    by_body = client.get("/posts?search=seven", headers=auth_headers_user_a).json()
+    assert [p["title"] for p in by_body] == ["Cafeteria hours"]
+
+    assert client.get("/posts?search=nothingmatches", headers=auth_headers_user_a).json() == []
+
+
+def test_feed_is_newest_first_and_paginates(client, auth_headers_user_a):
+    for i in range(5):
+        client.post(
+            "/posts", json={"title": f"Post {i}", "body": "Body", "anonymous": False},
+            headers=auth_headers_user_a,
+        )
+
+    page = client.get("/posts?limit=2&offset=0", headers=auth_headers_user_a).json()
+    assert [p["title"] for p in page] == ["Post 4", "Post 3"]
+
+    second = client.get("/posts?limit=2&offset=2", headers=auth_headers_user_a).json()
+    assert [p["title"] for p in second] == ["Post 2", "Post 1"]
+
+
+def test_forum_requires_authentication(client):
+    assert client.get("/posts").status_code == 401
+    assert client.post("/posts", json={"title": "x", "body": "y"}).status_code == 401

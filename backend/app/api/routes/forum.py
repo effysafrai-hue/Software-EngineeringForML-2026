@@ -289,7 +289,7 @@ def react_to_comment(
     if not comment:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Comment not found.")
 
-    _upsert_reaction(db, current_user.id, reaction_in.value, comment_id=comment_id)
+    changed = _upsert_reaction(db, current_user.id, reaction_in.value, comment_id=comment_id)
     summary = build_reaction_index(db, current_user.id, comment_ids=[comment_id]).for_comment(comment_id)
     realtime.broadcast(
         {
@@ -299,6 +299,23 @@ def react_to_comment(
             **_counts_only(summary),
         }
     )
+    if changed:
+        # Same rule as post reactions: the comment's author is told what
+        # happened, never who did it.
+        verb = "liked" if reaction_in.value == "like" else "disliked"
+        realtime.notify_user(
+            db,
+            user_id=comment.user_id,
+            actor_id=current_user.id,
+            message=f"Someone {verb} your comment.",
+            payload={
+                "type": realtime.EVENT_REACTION,
+                "post_id": comment.post_id,
+                "comment_id": comment_id,
+                **_counts_only(summary),
+            },
+        )
+
     return summary
 
 
