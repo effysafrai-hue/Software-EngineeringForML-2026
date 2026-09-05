@@ -7,8 +7,17 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: ${POSTGRES_DB:-se_ml_effy}
-    ports:
-      - "5432:5432"
+    # No `ports:` on purpose. The database is reachable only over the internal
+    # compose network, as `postgres:5432`, so a client cannot talk to it
+    # directly — the API is the only way in. Publishing 5432 would put the
+    # database on the host's interfaces, where its password is the single thing
+    # between the internet and every row.
+    #
+    # For a psql prompt or a one-off query, go through the container:
+    #   docker compose exec postgres psql -U postgres -d se_ml_effy
+    # To point a GUI client at it temporarily, add a local override rather than
+    # editing this file (docker-compose.override.yml is git-ignored by habit):
+    #   services: { postgres: { ports: ["127.0.0.1:5432:5432"] } }
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -25,8 +34,11 @@ services:
     image: ollama/ollama:latest
     container_name: se_ml_effy_ollama
     restart: unless-stopped
-    ports:
-      - "11434:11434"
+    # No `ports:` either: the model is reachable only as `ollama:11434` from the
+    # backend. An exposed Ollama is an unauthenticated inference endpoint — a
+    # client could run arbitrary prompts on it, bypassing the app's grounding
+    # rules, its rate limits and its priority queue, on your hardware.
+    #   docker compose exec ollama ollama list   # for a look inside
     volumes:
       - ollama_data:/root/.ollama
     environment:
@@ -109,6 +121,15 @@ services:
       - RATE_LIMIT_MEMORY=${RATE_LIMIT_MEMORY:-30/minute}
     ports:
       - "8000:8000"
+    # Liveness, so a wedged API is restarted rather than sitting there accepting
+    # connections it will never answer. /health touches no dependency, so it
+    # reports "this process is serving", not "everything downstream is fine".
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
     volumes:
       - ./backend:/app
     depends_on:

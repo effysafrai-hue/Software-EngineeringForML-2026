@@ -5,6 +5,10 @@ Full-stack application combining smart AI scheduling, shared group calendars, co
 > **Grading / status:** [PROGRESS.md](PROGRESS.md) walks every requirement in the
 > project guidelines and says what is fully implemented, what is partial and
 > why — with the file and the test behind each claim.
+>
+> **Submission report:** [REPORT.md](REPORT.md) — what the app is, every feature
+> with the tests that cover it, and the risk assessment (availability,
+> scalability, spam, security, persistence).
 
 ---
 
@@ -18,7 +22,8 @@ Full-stack application combining smart AI scheduling, shared group calendars, co
 | **ReDoc Documentation** | [http://localhost:8000/redoc](http://localhost:8000/redoc) | Alternative structured API documentation |
 | **API Health Check** | [http://localhost:8000/health](http://localhost:8000/health) | System health & readiness status |
 | **OpenAPI Specification** | [http://localhost:8000/openapi.json](http://localhost:8000/openapi.json) | Raw OpenAPI JSON schema |
-| **Ollama Local LLM Service** | [http://localhost:11434](http://localhost:11434) | Local LLM fallback, only with `--profile ollama` (Llama 3.1) |
+| **Ollama Local LLM Service** | *not published* — `ollama:11434`, internal only | Local LLM fallback, only with `--profile ollama` (Llama 3.1). Reach it with `docker compose exec ollama ollama list` |
+| **PostgreSQL** | *not published* — `postgres:5432`, internal only | Reach it with `docker compose exec postgres psql -U postgres -d se_ml_effy` |
 | **Static Uploads Directory** | [http://localhost:8000/uploads/](http://localhost:8000/uploads/) | Hosted media attachments (images/videos) |
 
 ---
@@ -26,9 +31,10 @@ Full-stack application combining smart AI scheduling, shared group calendars, co
 ## 🚀 Running the whole system
 
 **Prerequisites:** Docker Desktop (or Docker Engine + Compose v2) and nothing
-else — Python, Node and Postgres all run inside the containers. Ports 5173, 8000
-and 5432 must be free. Roughly 2 GB of disk for the images; add ~6 GB and 5 GB of
-free RAM if you choose the local-LLM path.
+else — Python, Node and Postgres all run inside the containers. Only ports
+**5173** and **8000** need to be free: the database and the local model are
+deliberately not published to the host. Roughly 2 GB of disk for the images; add
+~6 GB and 5 GB of free RAM if you choose the local-LLM path.
 
 ### 1. Configure the environment
 
@@ -138,7 +144,8 @@ docker compose exec backend alembic downgrade -1   # roll back one migration
 | Symptom | Cause and fix |
 | :--- | :--- |
 | Chat returns `503 ... currently unavailable` | No `GEMINI_API_KEY`, or `LLM_PROVIDER=ollama` and the model has not finished downloading |
-| `port is already allocated` | Something else holds 5173/8000/5432. Stop it, or change the left-hand side of the `ports:` mapping |
+| `port is already allocated` | Something else holds 5173 or 8000. Stop it, or change the left-hand side of the `ports:` mapping |
+| A GUI database client cannot connect | Postgres is intentionally not published. Use `docker compose exec postgres psql -U postgres -d se_ml_effy`, or add a local `docker-compose.override.yml` binding `127.0.0.1:5432:5432` |
 | Backend restarts in a loop | Migrations failed — `docker compose logs backend`. A stale volume from an older schema is fixed with `docker compose down -v` |
 | Requests fail with a CORS error | `CORS_ORIGINS` does not include the origin the browser loaded the app from |
 | `llama-server process has terminated: signal: killed` | The Docker VM does not have ~5 GB free for the local model. Check with `docker compose exec ollama free -h`, or switch back to Gemini |
