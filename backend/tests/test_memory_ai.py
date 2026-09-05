@@ -23,6 +23,10 @@ from app.services.ai_agent import process_chat
 
 MOCK_NOW = datetime(2026, 6, 10, 10, 0, 0, tzinfo=timezone.utc)
 
+# Times here are read as the raw stored instant, which is only meaningful because
+# the suite pins the default zone to UTC (`pinned_default_timezone` in
+# conftest.py). Wall-clock conversion is tests/test_timezones.py' subject, not
+# this file's.
 pytestmark = pytest.mark.live_llm
 
 USER_ID = 1

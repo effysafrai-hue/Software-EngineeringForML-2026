@@ -14,6 +14,7 @@ os.environ.setdefault("OLLAMA_TIMEOUT", "300.0")
 
 from app.main import app
 from app.db.session import Base, get_db
+from app.core.config import settings
 from app.core.security import get_password_hash, create_access_token
 from app.core.limiter import reset_rate_limits as _reset_rate_limits
 from app.models.user import User
@@ -66,6 +67,25 @@ def pytest_collection_modifyitems(config, items):
     if deselected:
         config.hook.pytest_deselected(items=deselected)
         items[:] = selected
+
+
+@pytest.fixture(autouse=True)
+def pinned_default_timezone(monkeypatch):
+    """Pin DEFAULT_TIMEZONE to UTC for the whole suite.
+
+    `Settings` reads the deployment's `.env`, so without this the operator's
+    configuration decides what the tests measure: with `DEFAULT_TIMEZONE=
+    Asia/Jerusalem`, a "3pm" scheduling test correctly stores 12:00Z and then
+    fails an assertion written as `start_time.hour == 15`. The behaviour was
+    right and the test was reading a raw UTC column — a configuration-dependent
+    suite is the real defect.
+
+    Tests that care about a zone name it explicitly (`process_chat(...,
+    timezone_name="Asia/Jerusalem")`, or `tz=` on a tool), which is unaffected by
+    this pin; `tests/test_timezones.py` overrides the setting where the fallback
+    itself is what is under test.
+    """
+    monkeypatch.setattr(settings, "DEFAULT_TIMEZONE", "UTC")
 
 
 @pytest.fixture(autouse=True)

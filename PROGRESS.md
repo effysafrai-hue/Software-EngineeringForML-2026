@@ -18,7 +18,7 @@ missing — a claim that turns out to be false costs more than an honest gap.
 `GEMINI_API_KEY` is the whole setup; the schema and the course database are
 applied on boot.
 
-**Test suite:** 237 offline tests (`pytest --no-ai`, no key or network needed) and
+**Test suite:** 241 offline tests (`pytest --no-ai`, no key or network needed) and
 26 live-model tests (`pytest --ai-only`, needs `GEMINI_API_KEY`). See
 [Test map](#test-map) at the bottom for which file proves what.
 
@@ -408,7 +408,7 @@ Anything marked API-only is easiest to exercise from
 ## Test map
 
 ```bash
-docker compose exec backend pytest --no-ai      # 237 tests, no key or network
+docker compose exec backend pytest --no-ai      # 241 tests, no key or network
 docker compose exec backend pytest --ai-only    # 26 tests, needs GEMINI_API_KEY
 ```
 

@@ -6,6 +6,13 @@ from app.services.ai_agent import process_chat
 
 MOCK_NOW = datetime(2026, 6, 10, 10, 0, 0, tzinfo=timezone.utc)
 
+# These tests are about intent extraction, not timezones, so they run in the
+# zone the suite pins (UTC — see `pinned_default_timezone` in conftest.py) and
+# read `start_time` as the raw stored instant. Without that pin the assertions
+# below would depend on the operator's DEFAULT_TIMEZONE: at UTC+3 a correct
+# "3pm" turns into a stored 12:00 and `hour == 15` fails on working code.
+# Wall-clock behaviour in a real zone is covered by tests/test_timezones.py.
+
 # Every test here calls the real model, and the seeding fixture below also hits
 # the embeddings endpoint. Excluded from the default run; see pytest.ini.
 pytestmark = pytest.mark.live_llm

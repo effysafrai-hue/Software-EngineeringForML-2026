@@ -356,9 +356,24 @@ def test_the_shared_calendar_chat_uses_the_same_wall_clock(
 
 
 @pytest.mark.parametrize("name", [None, "", "   ", "Not/AZone", "UTC+3", 42])
-def test_resolution_falls_back_safely(name):
+def test_an_unusable_zone_falls_back_to_the_configured_default(name, monkeypatch):
     """An unknown zone must not raise: a bad header is not a reason to refuse to
-    schedule anything."""
+    schedule anything.
+
+    The setting is pinned here rather than assumed, because it is exactly the
+    knob a deployment is expected to change — a test that hardcodes UTC passes
+    on a developer's laptop and fails on a configured server.
+    """
+    monkeypatch.setattr(timezones.settings, "DEFAULT_TIMEZONE", "Europe/Paris")
+
+    assert timezones.zone_name(timezones.resolve_timezone(name)) == "Europe/Paris"
+
+
+@pytest.mark.parametrize("name", [None, "", "Not/AZone"])
+def test_a_broken_default_setting_still_lands_on_utc(name, monkeypatch):
+    """Last resort: a misconfigured DEFAULT_TIMEZONE must not break scheduling."""
+    monkeypatch.setattr(timezones.settings, "DEFAULT_TIMEZONE", "Mars/Olympus_Mons")
+
     assert timezones.resolve_timezone(name) is timezones.UTC
 
 
@@ -366,6 +381,20 @@ def test_resolution_prefers_the_first_usable_candidate():
     assert timezones.zone_name(timezones.resolve_timezone(None, JERUSALEM)) == JERUSALEM
     assert timezones.zone_name(timezones.resolve_timezone("Europe/Paris", JERUSALEM)) == "Europe/Paris"
     assert timezones.zone_name(timezones.resolve_timezone("Mars/Base", JERUSALEM)) == JERUSALEM
+
+
+def test_the_configured_default_is_what_an_unreported_browser_gets(db_session, fake_llm, monkeypatch):
+    """The `DEFAULT_TIMEZONE` path, end to end.
+
+    A client that sends no zone must still get its own wall clock, which is why
+    the setting is worth configuring rather than leaving on UTC.
+    """
+    monkeypatch.setattr("app.services.timezones.settings.DEFAULT_TIMEZONE", JERUSALEM)
+
+    process_chat("Book something", user_id=1, db=db_session, reference_time=MOCK_NOW)
+
+    assert JERUSALEM in fake_llm.last_prompt
+    assert "2026-06-10T13:00:00+03:00" in fake_llm.last_prompt
 
 
 def test_the_offset_label_follows_daylight_saving():

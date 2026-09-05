@@ -177,7 +177,13 @@ requests-per-minute quota and return 429s (run it a file at a time if so), and
 `tests/test_courses.py` is marked live at module level because its seeding
 fixture calls the embeddings endpoint, not only because of the assertions.
 
-The offline half is **237 tests** and needs no key, no network and no model.
+The offline half is **241 tests** and needs no key, no network and no model.
+
+The suite pins `DEFAULT_TIMEZONE` to UTC (`pinned_default_timezone` in
+`tests/conftest.py`) so your `.env` cannot change what a test measures. Without
+it, configuring a real zone makes scheduling tests that read the raw stored
+column fail on correct behaviour — a "3pm" request at UTC+3 rightly stores
+12:00Z. Tests that are about zones name one explicitly instead.
 
 ---
 
@@ -272,7 +278,7 @@ who says *"6pm"* means 6pm **where they are**. So:
 Two bugs this fixes, both silent before: "set it for 6pm" storing 18:00 UTC and
 displaying as 21:00 for a user at UTC+3, and a late-evening request resolving
 "today" to the UTC date — a day behind, east of UTC. Covered by
-`tests/test_timezones.py` (28 offline tests plus one live-model check).
+`tests/test_timezones.py` (32 offline tests plus one live-model check).
 
 Note that `tzdata` is a dependency: without the IANA database, `zoneinfo`
 silently has no zones to resolve and every wall clock falls back to UTC.

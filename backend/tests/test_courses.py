@@ -31,24 +31,78 @@ def test_query_real_course_returns_grounded_info(client, auth_headers_user_a, db
     assert any(topic in reply_lower for topic in ["recursion", "control flow", "object-oriented", "functions", "variables"])
 
 
+# Ways a model says "that course is not in my data". The list is long because the
+# assertion is about meaning and the phrasing is the model's choice — it varies
+# between runs and between model versions, and a missing synonym fails a test on
+# a reply that was completely correct. Apostrophes are stripped before matching,
+# so "don't" and "dont" both hit.
+_ABSENCE_PHRASES = (
+    "no information",
+    "not have information",
+    "not have any information",
+    "dont have information",
+    "dont have any information",
+    "no details",
+    "no record",
+    "no data",
+    "not found",
+    "cannot find",
+    "could not find",
+    "couldnt find",
+    "unable to find",
+    "not in my",
+    "not in the",
+    "not listed",
+    "not available",
+    "does not exist",
+    "doesnt exist",
+    "no such course",
+    "no matching",
+    "not a course",
+    "isnt in",
+    "is not in",
+    "dont know",
+    "not know",
+    "not recognise",
+    "not recognize",
+    "no courses matching",
+)
+
+# Shapes a fabricated answer takes. This is the assertion that actually protects
+# requirement 3.2: inventing a syllabus is the failure, and a polite refusal
+# phrased in words nobody predicted is not.
+_FABRICATION_MARKERS = (
+    "syllabus includes",
+    "syllabus covers",
+    "topics include",
+    "topics covered include",
+    "covers the following",
+    "week 1",
+    "module 1",
+    "the course covers",
+    "you will learn",
+)
+
+
 def test_query_nonexistent_course_returns_explicit_unknown(client, auth_headers_user_a, db_session):
+    """Requirement 3.2 — the AI must not invent a course or its content."""
     prompt = "Can you give me the syllabus for CS999 Advanced Quantum Propulsion?"
     user_id = 1
 
     res = process_chat(prompt, user_id=user_id, db=db_session, reference_time=MOCK_NOW)
     assert res["action_taken"] is None
-    reply_lower = res["reply"].lower()
+    reply_lower = res["reply"].lower().replace("'", "").replace("’", "")
 
-    assert any(phrase in reply_lower for phrase in [
-        "don't have information",
-        "do not have information",
-        "no information",
-        "not found",
-        "don't know",
-        "do not know",
-        "not in",
-        "not listed",
-    ])
+    # The hard requirement: no invented syllabus for a course that does not exist.
+    fabricated = [marker for marker in _FABRICATION_MARKERS if marker in reply_lower]
+    assert not fabricated, f"invented content for CS999 ({fabricated}): {res['reply']}"
+
+    # And it has to say so, rather than answering something else entirely.
+    assert any(phrase in reply_lower for phrase in _ABSENCE_PHRASES), (
+        "the reply neither refused nor acknowledged that CS999 is unknown. If the "
+        "wording is a reasonable refusal, add it to _ABSENCE_PHRASES:\n"
+        f"{res['reply']}"
+    )
 
 
 def test_reverse_fact_check_gentle_correction(client, auth_headers_user_a, db_session):
